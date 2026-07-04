@@ -1,3 +1,7 @@
+<img width="1920" height="1080" alt="2026-07-04T10:25:15,202129311-04:00" src="https://github.com/user-attachments/assets/97678495-2f52-4ba3-bc3f-e05c7eb08eb1" />
+<img width="1920" height="1080" alt="2026-07-04T10:14:37,947911263-04:00" src="https://github.com/user-attachments/assets/8d8fbeee-cf76-4e47-b373-c79f7bae5c5d" />
+
+
 # settings-manager
 
 A native GTK-free settings app for a `sway` + `waybar` desktop, built with
