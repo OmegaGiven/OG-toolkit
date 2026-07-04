@@ -396,6 +396,7 @@ impl App {
                 self.saved_config = self.config.clone();
                 sway::apply_theme(&self.config);
                 save_to_sway_config(&self.hotkey_variables, &self.hotkey_bindings);
+                crate::terminal_theme::apply_terminal_theme(&self.config);
             }
 
             Message::Close => {

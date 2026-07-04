@@ -297,6 +297,12 @@ pub fn view<'a>(
             ]
             .align_y(iced::Alignment::Center)
             .spacing(12),
+            text(format!(
+                "Its color scheme is regenerated from this theme on Apply & Save, for: {}.",
+                crate::terminal_theme::SUPPORTED_TERMINALS.join(", "),
+            ))
+            .size(11)
+            .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
         ]
         .spacing(16)
         .padding(20),

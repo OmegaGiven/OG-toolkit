@@ -13,7 +13,7 @@ files directly and applies most changes live.
 | **Display** | Monitor resolution, drag-to-arrange multi-monitor layout |
 | **Network** | Wi-Fi (scan/connect/forget), wired interfaces (up/down), Bluetooth (power/discoverable/pairable, pair/connect/remove devices) |
 | **Hotkeys** | Edit sway `bindsym` keybindings and `set $var` variables with live key-capture, writes back to `~/.config/sway/config` |
-| **Theme** | Color picker (real HSV wheel) for every sway/waybar color, window gaps/borders, waybar position/thickness/module arrangement (drag-and-drop between left/center/right), clock timezones, mouse sensitivity, cursor theme/size |
+| **Theme** | Color picker (real HSV wheel) for every sway/waybar color, window gaps/borders, waybar position/thickness/module arrangement (drag-and-drop between left/center/right), clock timezones, mouse sensitivity, cursor theme/size, terminal color scheme (see below) |
 | **History** | Snapshots of every applied config, one-click restore |
 | **System Monitor** | Embedded `btop` |
 
@@ -120,6 +120,32 @@ colors it can find, current module layout, current cursor theme/size,
 current pointer acceleration). It won't overwrite anything until you
 actually change a setting and hit **Apply & Save** — nothing is touched on
 launch alone.
+
+## Terminal theming
+
+There's no 17th color picker for this — it reuses the same six colors
+already in the Theme tab (background, text, accent, secondary background,
+inactive, urgent) and procedurally derives a full 16-color ANSI palette
+plus background/foreground/cursor/selection from them, so the terminal
+just reads as part of the same theme. Regenerated on every **Apply & Save**
+for whichever terminal is set in "Default Terminal":
+
+- **Alacritty, foot, kitty** — written to a small companion file the app
+  owns entirely (`settings-manager-colors.{toml,ini,conf}`), wired in via
+  an `import`/`include` line added to the main config if it's missing.
+- **xfce4-terminal, terminator** — patched in place; their config is a flat
+  enough format that specific known keys can be safely updated without
+  touching anything else in the file.
+- **Konsole** — dropped as a new `.colorscheme` file. Konsole will list it
+  as a selectable scheme, but there's no reliable way to find and flip
+  "the active profile" automatically, so pick "Settings Manager" once in
+  Profile Settings.
+- **Everything else is a no-op**: wezterm's config is executable Lua (no
+  text-upsert is safe against arbitrary user logic), gnome-terminal/tilix
+  keep their profiles in dconf rather than a file, urxvt/xterm use
+  Xresources (a different mechanism entirely), and st has no config file
+  at all — its colors are compiled in. None of these error, they're just
+  silently skipped.
 
 ## A note on portability
 
