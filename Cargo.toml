@@ -1,0 +1,13 @@
+[package]
+name = "omegagiven-search"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "omegagiven-search"
+path = "src/main.rs"
+
+[dependencies]
+iced = { version = "0.13", default-features = false, features = ["wgpu", "tiny-skia", "advanced", "tokio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
