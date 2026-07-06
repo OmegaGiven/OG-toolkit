@@ -15,25 +15,25 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
-        border: Border { color: colors.border, width: 1.0, radius: 6.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
     let btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(colors.surface)),
         text_color: colors.text,
-        border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
     let accent_btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(colors.accent)),
         text_color: colors.bar_bg,
-        border: Border { radius: 4.0.into(), ..Default::default() },
+        border: Border { radius: colors.radius.into(), ..Default::default() },
         ..Default::default()
     };
     let danger_btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(Color { r: 0.6, g: 0.1, b: 0.1, a: 1.0 })),
         text_color: Color::WHITE,
-        border: Border { radius: 4.0.into(), ..Default::default() },
+        border: Border { radius: colors.radius.into(), ..Default::default() },
         ..Default::default()
     };
 

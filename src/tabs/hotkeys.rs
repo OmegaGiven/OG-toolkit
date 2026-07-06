@@ -12,25 +12,25 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
-        border: Border { color: colors.border, width: 1.0, radius: 6.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
     let btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(colors.surface)),
         text_color: colors.text,
-        border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
     let accent_btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(colors.accent)),
         text_color: colors.bar_bg,
-        border: Border { radius: 4.0.into(), ..Default::default() },
+        border: Border { radius: colors.radius.into(), ..Default::default() },
         ..Default::default()
     };
     let danger_btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(Color { r: 0.6, g: 0.1, b: 0.1, a: 1.0 })),
         text_color: Color::WHITE,
-        border: Border { radius: 4.0.into(), ..Default::default() },
+        border: Border { radius: colors.radius.into(), ..Default::default() },
         ..Default::default()
     };
 
@@ -53,7 +53,7 @@ pub fn view<'a>(
                 b: colors.accent.b * 0.15 + colors.bar_bg.b * 0.85,
                 a: 1.0,
             })),
-            border: Border { color: colors.accent, width: 1.0, radius: 4.0.into() },
+            border: Border { color: colors.accent, width: 1.0, radius: colors.radius.into() },
             ..Default::default()
         })
         .padding([10, 16])
@@ -80,7 +80,7 @@ pub fn view<'a>(
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(colors.accent)),
                 text_color: colors.bar_bg,
-                border: Border { radius: 4.0.into(), ..Default::default() },
+                border: Border { radius: colors.radius.into(), ..Default::default() },
                 ..Default::default()
             })
             .width(120)
@@ -102,7 +102,7 @@ pub fn view<'a>(
             .on_input(move |v| Message::HotkeyVarNameEdit(i, v))
             .style(move |_, _| iced::widget::text_input::Style {
                 background: Background::Color(colors.surface),
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 icon: colors.dim_text, placeholder: colors.dim_text,
                 value: colors.accent, selection: colors.accent,
             })
@@ -113,7 +113,7 @@ pub fn view<'a>(
             .on_input(move |v| Message::HotkeyVarValueEdit(i, v))
             .style(move |_, _| iced::widget::text_input::Style {
                 background: Background::Color(colors.surface),
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 icon: colors.dim_text, placeholder: colors.dim_text,
                 value: colors.text, selection: colors.accent,
             })
@@ -211,7 +211,7 @@ pub fn view<'a>(
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(colors.accent)),
                 text_color: colors.bar_bg,
-                border: Border { radius: 4.0.into(), ..Default::default() },
+                border: Border { radius: colors.radius.into(), ..Default::default() },
                 ..Default::default()
             })
             .width(110)
@@ -233,7 +233,7 @@ pub fn view<'a>(
             .on_input(move |v| Message::HotkeyKeyEdit(i, v))
             .style(move |_, _| iced::widget::text_input::Style {
                 background: Background::Color(colors.surface),
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 icon: colors.dim_text, placeholder: colors.dim_text,
                 value: colors.text, selection: colors.accent,
             })
@@ -244,7 +244,7 @@ pub fn view<'a>(
             .on_input(move |v| Message::HotkeyCommandEdit(i, v))
             .style(move |_, _| iced::widget::text_input::Style {
                 background: Background::Color(colors.surface),
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 icon: colors.dim_text, placeholder: colors.dim_text,
                 value: colors.text, selection: colors.accent,
             })

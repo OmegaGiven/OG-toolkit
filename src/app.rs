@@ -22,6 +22,26 @@ pub struct HistoryEntry {
     pub snapshot: Config,
 }
 
+/// The name each app seeds its per-app tint hash with when "color variance"
+/// is enabled — keep these stable, changing one shifts that app's tint.
+pub const APP_TINT_SEED: &str = "settings-manager";
+
+/// Deterministic small per-app background tint so windows sharing this
+/// theme are easier to tell apart at a glance without losing the shared
+/// base-color identity — not random, the same app name always gets the
+/// same shift. Mirrored in file-manager/omegagiven-search/galias's own
+/// config loaders (no shared crate between these projects).
+pub fn apply_color_variance(color: Color, seed: &str, enabled: bool, amount: f32) -> Color {
+    if !enabled || amount <= 0.0 {
+        return color;
+    }
+    let hash: u32 = seed.bytes().fold(5381u32, |h, b| h.wrapping_mul(33).wrapping_add(b as u32));
+    let t = (hash % 1000) as f32 / 1000.0;
+    let shift = (t * 2.0 - 1.0) * amount;
+    let clamp = |v: f32| (v + shift).clamp(0.0, 1.0);
+    Color { r: clamp(color.r), g: clamp(color.g), b: clamp(color.b), a: color.a }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct AppColors {
     pub bar_bg: Color,
@@ -32,12 +52,17 @@ pub struct AppColors {
     pub border: Color,
     pub surface: Color,
     pub header_btn_bg: Color,
+    pub radius: f32,
 }
 
 impl AppColors {
     pub fn from_config(cfg: &Config) -> Self {
-        let bar_bg = hex_to_color(&cfg.bar_bg);
-        let sec_bg = hex_to_color(&cfg.sec_bg);
+        let bar_bg = apply_color_variance(
+            hex_to_color(&cfg.bar_bg), APP_TINT_SEED, cfg.color_variance_enabled, cfg.color_variance_amount,
+        );
+        let sec_bg = apply_color_variance(
+            hex_to_color(&cfg.sec_bg), APP_TINT_SEED, cfg.color_variance_enabled, cfg.color_variance_amount,
+        );
         let text = hex_to_color(&cfg.bar_text);
         let accent = hex_to_color(&cfg.accent);
 
@@ -56,9 +81,12 @@ impl AppColors {
             a: 1.0,
         };
 
-        Self { bar_bg, sec_bg, text, dim_text, accent, border, surface, header_btn_bg }
+        Self { bar_bg, sec_bg, text, dim_text, accent, border, surface, header_btn_bg, radius: cfg.corner_radius }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateSection { Pacman, Aur, Flatpak }
 
 // ── Messages ───────────────────────────────────────────────────────────────
 
@@ -77,6 +105,9 @@ pub enum Message {
     SystemSleepToggled(bool),
     SystemSleepMinus,
     SystemSleepPlus,
+    ScreenLockToggled(bool),
+    ScreenLockMinus,
+    ScreenLockPlus,
     StartupExecToggled(usize, bool),
     SystemdServiceToggled(usize, bool),
     SystemServiceToggled(usize, bool),
@@ -100,6 +131,30 @@ pub enum Message {
     BluetoothPair(String),
     BluetoothRemove(String),
 
+    // Updates tab
+    UpdatesStatusLoaded(sway::UpdateStatus),
+    UpdatesCheckStart,
+    UpdatesApplyPacman(Option<String>),
+    UpdatesApplyAur(Option<String>),
+    UpdatesApplyFlatpak(Option<String>),
+    UpdatesSearchChanged(String),
+    UpdatesSectionToggled(UpdateSection),
+
+    // Theme — login screen
+    SyncGreeterBackground,
+
+    // Theme — wallpaper
+    WallpaperModeChanged(String),
+    WallpaperImageSelected(String),
+    WallpaperUploadStart,
+    WallpaperUploaded(Option<String>),
+    WallpaperFitChanged(String),
+
+    // Theme — brightness
+    BrightnessMinus,
+    BrightnessPlus,
+    BrightnessModuleToggled(bool),
+
     // Display
     GapsInnerMinus,
     GapsInnerPlus,
@@ -115,6 +170,12 @@ pub enum Message {
     WaybarThicknessMinus,
     WaybarThicknessPlus,
     ClockTimezoneSelected(String),
+    Clock12hToggled(bool),
+    CornerRadiusMinus,
+    CornerRadiusPlus,
+    ColorVarianceToggled(bool),
+    ColorVarianceAmountMinus,
+    ColorVarianceAmountPlus,
     ClockAdd,
     ClockRemove(usize),
     ClockExtraTimezoneSelected(usize, String),
@@ -124,6 +185,8 @@ pub enum Message {
     ModuleDragStart(String, f32, f32, f32, f32),  // name, off_x, off_y, start_cursor_x, start_cursor_y
     ModuleDragMove(f32, f32),
     ModuleDragEnd,
+    ModuleAdd(String),
+    ModuleRemove(String),
 
     // Hotkeys — bindings
     HotkeyStartCapture(usize),
@@ -145,6 +208,8 @@ pub enum Message {
     // Theme
     ColorChanged(String, String),
     TerminalChanged(String),
+    BrowserChanged(String),
+    AiCliChanged(String),
     MouseSensitivityChanged(f32),
     CursorSizeMinus,
     CursorSizePlus,
@@ -206,6 +271,14 @@ pub struct App {
     pub theme_save_name: String,
     pub available_terminals: Vec<String>,
     pub available_cursor_themes: Vec<String>,
+    pub available_browsers: Vec<String>,
+    pub available_ai_clis: Vec<String>,
+    pub available_wallpapers: Vec<String>,
+    /// False on desktops with no real backlight device — brightness controls
+    /// stay visible but disabled so the same build works unmodified on a
+    /// laptop with a panel to control.
+    pub has_backlight: bool,
+    pub brightness: i32,
 
     // PTY / btop embed
     pub pty_session: Option<crate::pty::PtySession>,
@@ -239,6 +312,12 @@ pub struct App {
     pub bluetooth_devices: Vec<sway::BluetoothDevice>,
     pub network_scanning: bool,
 
+    // Updates tab
+    pub update_status: sway::UpdateStatus,
+    pub updates_checking: bool,
+    pub updates_search: String,
+    pub updates_collapsed: Vec<UpdateSection>,
+
     // Header search
     pub search_open: bool,
     pub search_query: String,
@@ -261,7 +340,11 @@ impl App {
         let variables = load_sway_variables();
         let monitors = sway::get_monitor_info();
         let imported = load_imported_themes();
+        let has_backlight = sway::has_backlight();
+        let brightness = if has_backlight { sway::get_brightness_percent().unwrap_or(50) as i32 } else { 0 };
         let terminals = detect_terminals(&config.terminal);
+        let browsers = detect_browsers(&config.default_browser);
+        let ai_clis = detect_ai_clis(&config.default_ai_cli);
         (
             Self {
                 config,
@@ -283,6 +366,11 @@ impl App {
                 theme_save_name: String::new(),
                 available_terminals: terminals,
                 available_cursor_themes: sway::get_available_cursor_themes(),
+                available_browsers: browsers,
+                available_ai_clis: ai_clis,
+                available_wallpapers: sway::scan_wallpapers(),
+                has_backlight,
+                brightness,
                 pty_session: None,
                 term_canvas: None,
                 window_size: iced::Size::new(1100.0, 720.0),
@@ -307,6 +395,11 @@ impl App {
                 bluetooth_adapter: sway::BluetoothAdapter::default(),
                 bluetooth_devices: Vec::new(),
                 network_scanning: false,
+
+                update_status: sway::UpdateStatus::default(),
+                updates_checking: false,
+                updates_search: String::new(),
+                updates_collapsed: Vec::new(),
                 search_open: false,
                 search_query: String::new(),
             },
@@ -355,6 +448,9 @@ impl App {
                 }
                 if self.current_tab == Tab::Network {
                     return load_network_data();
+                }
+                if self.current_tab == Tab::Updates {
+                    return load_update_status();
                 }
                 // Entering SysMonitor — ask the runtime for the real window
                 // size first; self.window_size can be stale if no resize
@@ -421,6 +517,11 @@ impl App {
                 self.config.system_sleep.minutes = self.config.system_sleep.minutes.saturating_sub(1).max(1);
             }
             Message::SystemSleepPlus => { self.config.system_sleep.minutes += 1; }
+            Message::ScreenLockToggled(v) => { self.config.screen_lock.enabled = v; }
+            Message::ScreenLockMinus => {
+                self.config.screen_lock.minutes = self.config.screen_lock.minutes.saturating_sub(1).max(1);
+            }
+            Message::ScreenLockPlus => { self.config.screen_lock.minutes += 1; }
             Message::StartupExecToggled(idx, enabled) => {
                 if let Some(e) = self.startup_execs.get_mut(idx) {
                     if let Some(new_line) = sway::toggle_startup_exec(e.line_index, &e.original_line, enabled) {
@@ -558,6 +659,71 @@ impl App {
                 self.sync_reload_network();
             }
 
+            // Updates tab
+            Message::UpdatesStatusLoaded(status) => {
+                self.update_status = status;
+                self.updates_checking = false;
+            }
+            Message::UpdatesCheckStart => {
+                self.updates_checking = true;
+                return load_update_status();
+            }
+            Message::UpdatesApplyPacman(pkg) => sway::update_pacman(&self.config.terminal, pkg.as_deref()),
+            Message::UpdatesApplyAur(pkg) => sway::update_aur(&self.config.terminal, pkg.as_deref()),
+            Message::UpdatesApplyFlatpak(id) => sway::update_flatpak(&self.config.terminal, id.as_deref()),
+            Message::UpdatesSearchChanged(q) => self.updates_search = q,
+            Message::UpdatesSectionToggled(section) => {
+                if let Some(pos) = self.updates_collapsed.iter().position(|s| *s == section) {
+                    self.updates_collapsed.remove(pos);
+                } else {
+                    self.updates_collapsed.push(section);
+                }
+            }
+
+            Message::SyncGreeterBackground => {
+                if let Some(wallpaper) = sway::get_current_wallpaper() {
+                    sway::sync_greeter_background(&self.config.terminal, &wallpaper);
+                }
+            }
+
+            Message::WallpaperFitChanged(fit) => { self.config.wallpaper_fit = fit; }
+            Message::BrightnessMinus => {
+                self.brightness = (self.brightness - 5).max(0);
+                sway::set_brightness_percent(self.brightness as u32);
+            }
+            Message::BrightnessPlus => {
+                self.brightness = (self.brightness + 5).min(100);
+                sway::set_brightness_percent(self.brightness as u32);
+            }
+            Message::BrightnessModuleToggled(show) => {
+                if show {
+                    if !self.config.modules_right.iter().any(|m| m == "backlight") {
+                        self.config.modules_right.push("backlight".to_string());
+                    }
+                } else {
+                    self.config.modules_right.retain(|m| m != "backlight");
+                }
+                sway::set_waybar_layout(&self.config);
+            }
+            Message::WallpaperModeChanged(mode) => { self.config.wallpaper_mode = mode; }
+            Message::WallpaperImageSelected(path) => { self.config.wallpaper_path = path; }
+            Message::WallpaperUploadStart => {
+                return Task::perform(
+                    async { tokio::task::spawn_blocking(sway::import_wallpaper).await.unwrap_or(None) },
+                    Message::WallpaperUploaded,
+                );
+            }
+            Message::WallpaperUploaded(picked) => {
+                if let Some(path) = picked {
+                    self.config.wallpaper_mode = "image".to_string();
+                    self.config.wallpaper_path = path.clone();
+                    if !self.available_wallpapers.contains(&path) {
+                        self.available_wallpapers.push(path);
+                        self.available_wallpapers.sort();
+                    }
+                }
+            }
+
             // Display
             Message::GapsInnerMinus => { self.config.gaps_inner = (self.config.gaps_inner - 1).max(0); }
             Message::GapsInnerPlus => { self.config.gaps_inner += 1; }
@@ -599,6 +765,24 @@ impl App {
                 self.config.clock_timezone = if tz == "System Default" { String::new() } else { tz };
                 let _ = self.config.save();
                 sway::set_waybar_layout(&self.config);
+            }
+            Message::Clock12hToggled(v) => {
+                self.config.clock_12h = v;
+                let _ = self.config.save();
+                sway::set_waybar_layout(&self.config);
+            }
+            Message::CornerRadiusMinus => {
+                self.config.corner_radius = (self.config.corner_radius - 2.0).max(0.0);
+            }
+            Message::CornerRadiusPlus => {
+                self.config.corner_radius += 2.0;
+            }
+            Message::ColorVarianceToggled(v) => { self.config.color_variance_enabled = v; }
+            Message::ColorVarianceAmountMinus => {
+                self.config.color_variance_amount = (self.config.color_variance_amount - 0.01).max(0.0);
+            }
+            Message::ColorVarianceAmountPlus => {
+                self.config.color_variance_amount = (self.config.color_variance_amount + 0.01).min(0.3);
             }
             Message::ClockAdd => {
                 let id = self.config.next_clock_id;
@@ -661,6 +845,22 @@ impl App {
                     let _ = self.config.save();
                     sway::set_waybar_layout(&self.config);
                 }
+            }
+            Message::ModuleAdd(id) => {
+                let already_placed = [&self.config.modules_left, &self.config.modules_center, &self.config.modules_right]
+                    .into_iter().any(|list| list.contains(&id));
+                if !already_placed {
+                    self.config.modules_right.push(id);
+                    let _ = self.config.save();
+                    sway::set_waybar_layout(&self.config);
+                }
+            }
+            Message::ModuleRemove(id) => {
+                for list in [&mut self.config.modules_left, &mut self.config.modules_center, &mut self.config.modules_right] {
+                    list.retain(|m| m != &id);
+                }
+                let _ = self.config.save();
+                sway::set_waybar_layout(&self.config);
             }
 
             // Hotkeys — bindings
@@ -749,10 +949,13 @@ impl App {
                     "accent" => self.config.accent = val,
                     "inactive_color" => self.config.inactive_color = val,
                     "urgent_color" => self.config.urgent_color = val,
+                    "wallpaper_color" => self.config.wallpaper_color = val,
                     _ => {}
                 }
             }
             Message::TerminalChanged(v) => { self.config.terminal = v; }
+            Message::BrowserChanged(v) => { self.config.default_browser = v; }
+            Message::AiCliChanged(v) => { self.config.default_ai_cli = v; }
             Message::MouseSensitivityChanged(v) => {
                 self.config.mouse_sensitivity = v;
                 let _ = self.config.save();
@@ -781,6 +984,7 @@ impl App {
                     "accent" => &self.config.accent,
                     "inactive_color" => &self.config.inactive_color,
                     "urgent_color" => &self.config.urgent_color,
+                    "wallpaper_color" => &self.config.wallpaper_color,
                     _ => &self.config.bar_bg,
                 };
                 let c = hex_to_color(current_hex);
@@ -817,6 +1021,7 @@ impl App {
                         "accent" => self.config.accent = hex,
                         "inactive_color" => self.config.inactive_color = hex,
                         "urgent_color" => self.config.urgent_color = hex,
+                        "wallpaper_color" => self.config.wallpaper_color = hex,
                         _ => {}
                     }
                 }
@@ -1113,7 +1318,7 @@ impl App {
                 iced::widget::button::Style {
                     background: Some(Background::Color(bg)),
                     text_color: if is_disabled { Color { a: 0.35, ..c.text } } else { c.text },
-                    border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+                    border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
                     ..Default::default()
                 }
             })
@@ -1128,7 +1333,7 @@ impl App {
         .style(move |_, _| iced::widget::button::Style {
             background: Some(Background::Color(c.accent)),
             text_color: c.bar_bg,
-            border: Border { radius: 4.0.into(), ..Default::default() },
+            border: Border { radius: colors.radius.into(), ..Default::default() },
             ..Default::default()
         })
         .on_press(Message::ApplyAndSave)
@@ -1144,7 +1349,7 @@ impl App {
                 _ => c.header_btn_bg,
             })),
             text_color: c.text,
-            border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
             ..Default::default()
         })
         .on_press(Message::SearchToggle)
@@ -1155,7 +1360,7 @@ impl App {
                 .on_input(Message::SearchQueryChanged)
                 .style(move |_, _| iced::widget::text_input::Style {
                     background: Background::Color(c.surface),
-                    border: Border { color: c.accent, width: 1.0, radius: 4.0.into() },
+                    border: Border { color: c.accent, width: 1.0, radius: colors.radius.into() },
                     icon: c.dim_text,
                     placeholder: c.dim_text,
                     value: c.text,
@@ -1267,13 +1472,13 @@ impl App {
 
         let card_style = move |_: &_| container::Style {
             background: Some(Background::Color(c.sec_bg)),
-            border: Border { color: c.border, width: 1.0, radius: 6.0.into() },
+            border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
             ..Default::default()
         };
         let btn_style = move |_: &_, _| iced::widget::button::Style {
             background: Some(Background::Color(c.surface)),
             text_color: c.text,
-            border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
             ..Default::default()
         };
 
@@ -1290,7 +1495,7 @@ impl App {
                 container(text(value.to_string()).style(move |_| iced::widget::text::Style { color: Some(c.text) }))
                     .style(move |_| container::Style {
                         background: Some(Background::Color(c.surface)),
-                        border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+                        border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
                         ..Default::default()
                     })
                     .padding([4, 12]),
@@ -1342,6 +1547,10 @@ impl App {
             toggler(self.config.system_sleep.enabled).on_toggle(Message::SystemSleepToggled).into());
         push("Power", "System suspend minutes".into(), "sleep power timeout".into(),
             spin(self.config.system_sleep.minutes as i64, Message::SystemSleepMinus, Message::SystemSleepPlus));
+        push("Power", "Screen lock".into(), "swaylock idle security".into(),
+            toggler(self.config.screen_lock.enabled).on_toggle(Message::ScreenLockToggled).into());
+        push("Power", "Screen lock minutes".into(), "swaylock idle timeout".into(),
+            spin(self.config.screen_lock.minutes as i64, Message::ScreenLockMinus, Message::ScreenLockPlus));
         for (idx, e) in self.startup_execs.iter().enumerate() {
             push("Power", e.command.clone(), "startup exec sway command".into(),
                 toggler(e.enabled).on_toggle(move |v| Message::StartupExecToggled(idx, v)).into());
@@ -1384,7 +1593,7 @@ impl App {
                 .on_input(move |v| Message::ColorChanged(key_owned2.clone(), v))
                 .style(move |_, _| iced::widget::text_input::Style {
                     background: Background::Color(c.surface),
-                    border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+                    border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
                     icon: c.dim_text, placeholder: c.dim_text, value: c.text, selection: c.accent,
                 })
                 .width(90)
@@ -1408,7 +1617,7 @@ impl App {
             text_color: c.text,
             placeholder_color: c.dim_text,
             handle_color: c.dim_text,
-            border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
         })
         .width(160)
         .into();
@@ -1429,7 +1638,7 @@ impl App {
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(if is_current { c.accent } else { c.surface })),
                 text_color: if is_current { c.bar_bg } else { c.text },
-                border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
                 ..Default::default()
             })
             .on_press(Message::WaybarPositionChanged(value.to_string()))
@@ -1455,7 +1664,7 @@ impl App {
                 text_color: c.text,
                 placeholder_color: c.dim_text,
                 handle_color: c.dim_text,
-                border: Border { color: c.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
             })
             .width(180)
             .into()
@@ -1513,6 +1722,13 @@ impl App {
                 &self.bluetooth_devices,
                 self.network_scanning,
             ),
+            Tab::Updates => tabs::updater::view(
+                colors,
+                &self.update_status,
+                self.updates_checking,
+                &self.updates_search,
+                &self.updates_collapsed,
+            ),
             Tab::Hotkeys => tabs::hotkeys::view(
                 colors,
                 &self.hotkey_variables,
@@ -1528,6 +1744,11 @@ impl App {
                 &self.imported_themes,
                 &self.available_terminals,
                 &self.available_cursor_themes,
+                &self.available_browsers,
+                &self.available_ai_clis,
+                &self.available_wallpapers,
+                self.has_backlight,
+                self.brightness,
                 self.module_arrange_mode,
                 self.module_dragging.as_ref(),
             ),
@@ -1606,7 +1827,7 @@ impl App {
             .on_submit(Message::ThemeSaveAsConfirm)
             .style(move |_, _| iced::widget::text_input::Style {
                 background: Background::Color(colors.surface),
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 icon: colors.dim_text,
                 placeholder: colors.dim_text,
                 value: colors.text,
@@ -1629,7 +1850,7 @@ impl App {
                         .style(move |_, _| iced::widget::button::Style {
                             background: Some(Background::Color(colors.surface)),
                             text_color: colors.text,
-                            border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                             ..Default::default()
                         })
                         .on_press(Message::ThemeSaveAsCancel)
@@ -1639,7 +1860,7 @@ impl App {
                         .style(move |_, _| iced::widget::button::Style {
                             background: Some(Background::Color(colors.accent)),
                             text_color: colors.bar_bg,
-                            border: Border { radius: 4.0.into(), ..Default::default() },
+                            border: Border { radius: colors.radius.into(), ..Default::default() },
                             ..Default::default()
                         })
                         .on_press_maybe(can_save.then_some(Message::ThemeSaveAsConfirm))
@@ -1652,7 +1873,7 @@ impl App {
         )
         .style(move |_| container::Style {
             background: Some(Background::Color(colors.sec_bg)),
-            border: Border { color: colors.border, width: 1.0, radius: 8.0.into() },
+            border: Border { color: colors.border, width: 1.0, radius: (colors.radius + 2.0).into() },
             ..Default::default()
         })
         .width(320)
@@ -1735,7 +1956,7 @@ impl App {
                         .style(move |_, _| iced::widget::button::Style {
                             background: Some(Background::Color(colors.surface)),
                             text_color: colors.text,
-                            border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                             ..Default::default()
                         })
                         .on_press(Message::ColorPickerClose)
@@ -1745,7 +1966,7 @@ impl App {
                         .style(move |_, _| iced::widget::button::Style {
                             background: Some(Background::Color(colors.accent)),
                             text_color: colors.bar_bg,
-                            border: Border { radius: 4.0.into(), ..Default::default() },
+                            border: Border { radius: colors.radius.into(), ..Default::default() },
                             ..Default::default()
                         })
                         .on_press(Message::ColorPickerCommit)
@@ -1758,7 +1979,7 @@ impl App {
         )
         .style(move |_| container::Style {
             background: Some(Background::Color(colors.sec_bg)),
-            border: Border { color: colors.accent, width: 2.0, radius: 8.0.into() },
+            border: Border { color: colors.accent, width: 2.0, radius: (colors.radius + 2.0).into() },
             ..Default::default()
         })
         .width(420)
@@ -1857,11 +2078,7 @@ fn light_preset() -> Config {
 }
 
 /// Terminal emulators found on PATH (plus the configured one, always first).
-fn detect_terminals(current: &str) -> Vec<String> {
-    const KNOWN: &[&str] = &[
-        "alacritty", "foot", "kitty", "wezterm", "konsole", "gnome-terminal",
-        "xfce4-terminal", "tilix", "terminator", "urxvt", "st", "xterm",
-    ];
+fn on_path_dirs(bin: &str) -> bool {
     let home = std::env::var("HOME").unwrap_or_default();
     let mut paths: Vec<String> = std::env::var("PATH")
         .unwrap_or_default()
@@ -1869,18 +2086,43 @@ fn detect_terminals(current: &str) -> Vec<String> {
         .map(str::to_string)
         .collect();
     paths.push(format!("{}/.local/bin", home));
+    paths.iter().any(|d| std::path::Path::new(d).join(bin).is_file())
+}
 
-    let on_path = |bin: &str| paths.iter().any(|d| std::path::Path::new(d).join(bin).is_file());
-
-    let mut found: Vec<String> = KNOWN
+fn detect_from_known(known: &[&str], current: &str) -> Vec<String> {
+    let mut found: Vec<String> = known
         .iter()
-        .filter(|t| on_path(t))
+        .filter(|t| on_path_dirs(t))
         .map(|t| t.to_string())
         .collect();
     if !current.is_empty() && !found.iter().any(|t| t == current) {
         found.insert(0, current.to_string());
     }
     found
+}
+
+fn detect_terminals(current: &str) -> Vec<String> {
+    const KNOWN: &[&str] = &[
+        "alacritty", "foot", "kitty", "wezterm", "konsole", "gnome-terminal",
+        "xfce4-terminal", "tilix", "terminator", "urxvt", "st", "xterm",
+    ];
+    detect_from_known(KNOWN, current)
+}
+
+fn detect_browsers(current: &str) -> Vec<String> {
+    const KNOWN: &[&str] = &[
+        "brave", "brave-browser", "firefox", "firefox-esr", "chromium",
+        "google-chrome-stable", "google-chrome", "vivaldi-stable",
+        "epiphany", "qutebrowser", "opera",
+    ];
+    detect_from_known(KNOWN, current)
+}
+
+fn detect_ai_clis(current: &str) -> Vec<String> {
+    const KNOWN: &[&str] = &[
+        "claude", "gemini", "ollama", "aichat", "sgpt", "llm", "chatgpt",
+    ];
+    detect_from_known(KNOWN, current)
 }
 
 /// Translate an iced key press into terminal input bytes.
@@ -1958,6 +2200,19 @@ fn load_network_data() -> Task<Message> {
         |(wifi, networks, eth, bt_adapter, bt_devices)| {
             Message::NetworkDataLoaded(wifi, networks, eth, bt_adapter, bt_devices)
         },
+    )
+}
+
+/// `checkupdates`/`yay -Qua`/`flatpak remote-ls` each shell out and can take
+/// a second or two, so this runs off the UI thread like Power/Network do.
+fn load_update_status() -> Task<Message> {
+    Task::perform(
+        async {
+            tokio::task::spawn_blocking(sway::get_update_status)
+                .await
+                .unwrap_or_default()
+        },
+        Message::UpdatesStatusLoaded,
     )
 }
 

@@ -380,4 +380,20 @@ pub fn apply_terminal_theme(config: &Config) {
         "konsole" => apply_konsole(&palette),
         _ => {}
     }
+
+    nudge_live_reload(name);
+}
+
+/// Best-effort "apply without restarting" for already-open terminal windows.
+/// Alacritty already watches its own config file and reloads automatically —
+/// nothing to do there. kitty reloads its config on SIGUSR1. The rest
+/// (foot, xfce4-terminal, terminator, konsole) don't have a reliable
+/// signal-based live-reload, so those just pick up the new colors next time
+/// a window is opened.
+fn nudge_live_reload(terminal_name: &str) {
+    if terminal_name == "kitty" {
+        let _ = std::process::Command::new("pkill")
+            .args(["-SIGUSR1", "-x", "kitty"])
+            .status();
+    }
 }

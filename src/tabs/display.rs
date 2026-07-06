@@ -227,13 +227,13 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
-        border: Border { color: colors.border, width: 1.0, radius: 6.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
     let btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(colors.surface)),
         text_color: colors.text,
-        border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
 
@@ -258,7 +258,7 @@ pub fn view<'a>(
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(colors.accent)),
                 text_color: colors.bar_bg,
-                border: Border { radius: 4.0.into(), ..Default::default() },
+                border: Border { radius: colors.radius.into(), ..Default::default() },
                 ..Default::default()
             })
             .on_press(Message::ArrangeModeToggle)
@@ -311,7 +311,7 @@ pub fn view<'a>(
                     .width(Length::Fill).height(150)
                     .style(move |_| container::Style {
                         background: Some(Background::Color(bg_color)),
-                        border: Border { color: border_col, width: 1.0, radius: 4.0.into() },
+                        border: Border { color: border_col, width: 1.0, radius: colors.radius.into() },
                         ..Default::default()
                     })
                     .into(),
@@ -384,7 +384,7 @@ pub fn view<'a>(
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(if is_current { colors.accent } else { colors.surface })),
                 text_color: if is_current { colors.bar_bg } else { colors.text },
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 ..Default::default()
             })
             .on_press(Message::MonitorResolutionChanged(name_clone, mode_clone))

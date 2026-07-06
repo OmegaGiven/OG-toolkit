@@ -25,7 +25,7 @@ fn selectable_row<'a>(
                 border: Border {
                     color: if is_selected { colors.accent } else { iced::Color::TRANSPARENT },
                     width: if is_selected { 2.0 } else { 1.0 },
-                    radius: 6.0.into(),
+                    radius: colors.radius.into(),
                 },
                 ..Default::default()
             })
@@ -48,7 +48,7 @@ pub fn view<'a>(
         border: Border {
             color: colors.border,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: colors.radius.into(),
         },
         ..Default::default()
     };
@@ -106,6 +106,39 @@ pub fn view<'a>(
             ]
             .align_y(iced::Alignment::Center)
             .spacing(12),
+        ]
+        .spacing(16)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
+    let lock_card = container(
+        column![
+            section_title("Screen Lock", colors),
+            row![
+                label_text("Lock on idle", colors),
+                iced::widget::horizontal_space(),
+                toggler(config.screen_lock.enabled)
+                    .on_toggle(Message::ScreenLockToggled)
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(12),
+            row![
+                label_text("Lock after (minutes)", colors),
+                iced::widget::horizontal_space(),
+                spin_row(
+                    config.screen_lock.minutes,
+                    Message::ScreenLockMinus,
+                    Message::ScreenLockPlus,
+                    colors,
+                ),
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(12),
+            text("Also locks right before system suspend, regardless of the timeout above.")
+                .size(11)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
         ]
         .spacing(16)
         .padding(20),
@@ -238,7 +271,7 @@ pub fn view<'a>(
     .width(Length::Fill);
 
     scrollable(
-        column![monitor_card, system_card, startup_execs_card, services_card, system_services_card]
+        column![monitor_card, system_card, lock_card, startup_execs_card, services_card, system_services_card]
             .spacing(16)
             .padding(20)
     )
@@ -270,7 +303,7 @@ fn spin_row<'a>(
         border: Border {
             color: colors.border,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: colors.radius.into(),
         },
         ..Default::default()
     };
@@ -284,7 +317,7 @@ fn spin_row<'a>(
         )
         .style(move |_| container::Style {
             background: Some(Background::Color(colors.surface)),
-            border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
             ..Default::default()
         })
         .padding([4, 12]),

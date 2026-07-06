@@ -15,6 +15,23 @@ const COL_GAP: f32 = 12.0;
 const HEADER_H: f32 = 28.0;
 const CHIP_H: f32 = 28.0;
 const CHIP_GAP: f32 = 6.0;
+/// Width of the "×" remove hit-zone at the right edge of each chip.
+const REMOVE_ZONE_W: f32 = 22.0;
+
+/// Modules safe to add from the palette below the canvas: native waybar
+/// module types render fine with zero extra config, and the `custom/*`
+/// ones all have a hand-authored behavior block already in
+/// `~/.config/waybar/config` (on-click/exec/etc) — anything else would show
+/// up blank since custom modules have no meaning without that block.
+pub const ADDABLE_MODULES: &[&str] = &[
+    "sway/workspaces", "tray", "clock", "cpu", "memory", "network", "bluetooth", "pulseaudio", "backlight",
+    "custom/sysctl", "custom/claude", "custom/settings", "custom/app-store", "custom/terminal",
+    "custom/power", "custom/clipboard", "custom/notifications",
+];
+
+pub fn available_to_add(config: &Config) -> Vec<&'static str> {
+    ADDABLE_MODULES.iter().filter(|id| column_of(config, id).is_none()).copied().collect()
+}
 
 fn col_w() -> f32 {
     (CANVAS_WIDTH - COL_GAP * 2.0) / 3.0
@@ -111,6 +128,21 @@ impl<'a> ArrangeCanvas<'a> {
         }
         None
     }
+
+    /// The small "×" zone at the right edge of a chip — checked before
+    /// `hit_at` so clicking it removes instead of starting a drag.
+    fn hit_remove_at(&self, px: f32, py: f32) -> Option<String> {
+        for section in 0..3 {
+            for (idx, name) in list_for(self.config, section).iter().enumerate() {
+                let (x, y) = chip_pos(section, idx);
+                let zone_x = x + col_w() - REMOVE_ZONE_W;
+                if px >= zone_x && px <= x + col_w() && py >= y && py <= y + CHIP_H {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
+    }
 }
 
 impl<'a> canvas::Program<Message> for ArrangeCanvas<'a> {
@@ -128,6 +160,9 @@ impl<'a> canvas::Program<Message> for ArrangeCanvas<'a> {
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = local {
+                    if let Some(name) = self.hit_remove_at(pos.x, pos.y) {
+                        return (canvas::event::Status::Captured, Some(Message::ModuleRemove(name)));
+                    }
                     if let Some(name) = self.hit_at(pos.x, pos.y) {
                         let section = column_of(self.config, &name).unwrap_or(0);
                         let idx = list_for(self.config, section).iter().position(|m| m == &name).unwrap_or(0);
@@ -244,6 +279,23 @@ impl<'a> canvas::Program<Message> for ArrangeCanvas<'a> {
                     line_height: iced::widget::text::LineHeight::default(),
                     shaping: iced::widget::text::Shaping::Basic,
                 });
+
+                if !is_dragging {
+                    let remove_hovered = cursor.position_in(bounds)
+                        .map(|p| p.x >= x + col_w() - REMOVE_ZONE_W && p.x <= x + col_w() && p.y >= y && p.y <= y + CHIP_H)
+                        .unwrap_or(false);
+                    frame.fill_text(canvas::Text {
+                        content: "×".to_string(),
+                        position: iced::Point::new(x + col_w() - REMOVE_ZONE_W / 2.0, y + CHIP_H / 2.0),
+                        color: if remove_hovered { colors.accent } else { Color { a: 0.5, ..colors.text } },
+                        size: Pixels(15.0),
+                        font: iced::Font::default(),
+                        horizontal_alignment: iced::alignment::Horizontal::Center,
+                        vertical_alignment: iced::alignment::Vertical::Center,
+                        line_height: iced::widget::text::LineHeight::default(),
+                        shaping: iced::widget::text::Shaping::Basic,
+                    });
+                }
             }
         }
 
@@ -255,6 +307,9 @@ impl<'a> canvas::Program<Message> for ArrangeCanvas<'a> {
             return mouse::Interaction::Grabbing;
         }
         if let Some(pos) = cursor.position_in(bounds) {
+            if self.hit_remove_at(pos.x, pos.y).is_some() {
+                return mouse::Interaction::Pointer;
+            }
             if self.hit_at(pos.x, pos.y).is_some() {
                 return mouse::Interaction::Grab;
             }
@@ -269,11 +324,50 @@ pub fn view<'a>(config: &'a Config, colors: AppColors, dragging: Option<&'a Modu
         .width(Length::Fill)
         .height(height);
 
-    if height > MAX_VIEWPORT_HEIGHT {
+    let canvas_el: Element<Message> = if height > MAX_VIEWPORT_HEIGHT {
         iced::widget::scrollable(canvas)
             .height(Length::Fixed(MAX_VIEWPORT_HEIGHT))
             .into()
     } else {
         canvas.into()
-    }
+    };
+
+    let to_add = available_to_add(config);
+    let palette: Element<Message> = if to_add.is_empty() {
+        iced::widget::text("All available modules are already on the bar.")
+            .size(12)
+            .style(move |_| iced::widget::text::Style { color: Some(Color { a: 0.55, ..colors.text } ) })
+            .into()
+    } else {
+        let chips: Vec<Element<Message>> = to_add.into_iter().map(|id| {
+            let label = display_name(id, config);
+            iced::widget::button(
+                iced::widget::text(format!("+ {label}")).size(12)
+                    .style(move |_| iced::widget::text::Style { color: Some(colors.text) })
+            )
+            .style(move |_, status| iced::widget::button::Style {
+                background: Some(iced::Background::Color(match status {
+                    iced::widget::button::Status::Hovered => colors.accent,
+                    _ => colors.surface,
+                })),
+                text_color: colors.text,
+                border: iced::Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                ..Default::default()
+            })
+            .on_press(Message::ModuleAdd(id.to_string()))
+            .padding([4, 10])
+            .into()
+        }).collect();
+        iced::widget::row(chips).spacing(8).wrap().into()
+    };
+
+    iced::widget::column![
+        canvas_el,
+        iced::widget::text("Available modules — click to add to the Right column, then drag to place. Click the × on a chip above to remove it.")
+            .size(11)
+            .style(move |_| iced::widget::text::Style { color: Some(Color { a: 0.55, ..colors.text }) }),
+        palette,
+    ]
+    .spacing(10)
+    .into()
 }

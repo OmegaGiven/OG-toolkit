@@ -8,10 +8,11 @@ name = "settings-manager"
 path = "src/main.rs"
 
 [dependencies]
-iced = { version = "0.13", default-features = false, features = ["wgpu", "tiny-skia", "advanced", "tokio", "canvas"] }
+iced = { version = "0.13", default-features = false, features = ["wgpu", "tiny-skia", "advanced", "tokio", "canvas", "image"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 chrono = { version = "0.4", features = ["serde"] }
 portable-pty = "0.8"
 vt100 = "0.15"
 tokio = { version = "1", features = ["rt"] }
+rfd = "0.15"

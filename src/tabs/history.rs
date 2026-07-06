@@ -6,7 +6,7 @@ use crate::app::{AppColors, HistoryEntry, Message};
 pub fn view<'a>(history: &'a [HistoryEntry], colors: AppColors) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
-        border: Border { color: colors.border, width: 1.0, radius: 6.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
 
@@ -24,7 +24,7 @@ pub fn view<'a>(history: &'a [HistoryEntry], colors: AppColors) -> Element<'a, M
     let btn_style = move |_: &_, _| iced::widget::button::Style {
         background: Some(Background::Color(colors.surface)),
         text_color: colors.text,
-        border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
 

@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, pick_list, row, text, text_input};
+use iced::widget::{button, column, container, image, pick_list, row, text, text_input, toggler};
 use iced::{Background, Border, Color, Element, Length};
 
 use crate::app::{AppColors, Message, ModuleDrag};
@@ -64,19 +64,24 @@ pub fn view<'a>(
     imported_themes: &'a [(String, Config)],
     available_terminals: &'a [String],
     available_cursor_themes: &'a [String],
+    available_browsers: &'a [String],
+    available_ai_clis: &'a [String],
+    available_wallpapers: &'a [String],
+    has_backlight: bool,
+    brightness: i32,
     module_arrange_mode: bool,
     module_dragging: Option<&'a ModuleDrag>,
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
-        border: Border { color: colors.border, width: 1.0, radius: 6.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
 
     let btn_style = move |_theme: &iced::Theme, _status: iced::widget::button::Status| iced::widget::button::Style {
         background: Some(Background::Color(colors.surface)),
         text_color: colors.text,
-        border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         ..Default::default()
     };
 
@@ -93,7 +98,7 @@ pub fn view<'a>(
         .style(move |_, _| iced::widget::button::Style {
             background: Some(Background::Color(bg)),
             text_color: fg,
-            border: Border { radius: 4.0.into(), ..Default::default() },
+            border: Border { radius: colors.radius.into(), ..Default::default() },
             ..Default::default()
         })
         .on_press(Message::ThemePreset(name.to_string()))
@@ -116,7 +121,7 @@ pub fn view<'a>(
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(colors.accent)),
                 text_color: colors.bar_bg,
-                border: Border { radius: 4.0.into(), ..Default::default() },
+                border: Border { radius: colors.radius.into(), ..Default::default() },
                 ..Default::default()
             })
             .padding([6, 14])
@@ -139,7 +144,7 @@ pub fn view<'a>(
             .style(move |_, _| iced::widget::button::Style {
                 background: Some(Background::Color(bg)),
                 text_color: fg,
-                border: Border { radius: 4.0.into(), ..Default::default() },
+                border: Border { radius: colors.radius.into(), ..Default::default() },
                 ..Default::default()
             })
             .on_press(Message::ImportedThemeSelect(i))
@@ -236,7 +241,7 @@ pub fn view<'a>(
             .on_input(move |v| Message::ColorChanged(key_str.clone(), v))
             .style(move |_, _| iced::widget::text_input::Style {
                 background: Background::Color(colors.surface),
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                 icon: colors.dim_text,
                 placeholder: colors.dim_text,
                 value: colors.text,
@@ -266,39 +271,98 @@ pub fn view<'a>(
     ];
     colors_col.extend(color_rows);
 
+    let label_pre_spin = move |t: &'a str| -> Element<'a, Message> {
+        text(t).style(move |_| iced::widget::text::Style { color: Some(colors.text) }).into()
+    };
+
+    colors_col.push(
+        row![
+            label_pre_spin("Color variance between apps"), iced::widget::horizontal_space(),
+            toggler(config.color_variance_enabled).on_toggle(Message::ColorVarianceToggled),
+        ]
+        .align_y(iced::Alignment::Center).spacing(12)
+        .into()
+    );
+    colors_col.push(
+        text("Slightly shifts each app's background tint (same base colors) so overlapping windows are easier to tell apart.")
+            .size(11)
+            .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+            .into()
+    );
+    {
+        let percent = (config.color_variance_amount * 100.0).round() as i32;
+        colors_col.push(
+            row![
+                label_pre_spin("Variance amount"), iced::widget::horizontal_space(),
+                button(text("-").style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                    .style(move |_: &_, _| iced::widget::button::Style {
+                        background: Some(Background::Color(colors.surface)),
+                        text_color: colors.text,
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                        ..Default::default()
+                    })
+                    .on_press(Message::ColorVarianceAmountMinus),
+                container(text(format!("{percent}%")).style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(colors.surface)),
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                        ..Default::default()
+                    })
+                    .padding([4, 12]),
+                button(text("+").style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                    .style(move |_: &_, _| iced::widget::button::Style {
+                        background: Some(Background::Color(colors.surface)),
+                        text_color: colors.text,
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                        ..Default::default()
+                    })
+                    .on_press(Message::ColorVarianceAmountPlus),
+            ]
+            .align_y(iced::Alignment::Center).spacing(12)
+            .into()
+        );
+    }
+
     let colors_card = container(
         column(colors_col).spacing(12).padding(20),
     )
     .style(card_style)
     .width(Length::Fill);
 
-    // ── Terminal setting ──────────────────────────────────────────────────
+    // ── Default applications ────────────────────────────────────────────────
+    let app_picker = move |label_text: &'a str, options: &'a [String], current: &'a str, on_select: fn(String) -> Message| -> Element<'a, Message> {
+        row![
+            text(label_text)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
+            iced::widget::horizontal_space(),
+            pick_list(
+                options,
+                if current.is_empty() { None } else { Some(current.to_string()) },
+                on_select,
+            )
+            .style(move |_, _| iced::widget::pick_list::Style {
+                background: Background::Color(colors.surface),
+                text_color: colors.text,
+                placeholder_color: colors.dim_text,
+                handle_color: colors.dim_text,
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            })
+            .width(200),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(12)
+        .into()
+    };
+
     let terminal_card = container(
         column![
-            text("Default Terminal").size(15)
+            text("Default Applications").size(15)
                 .style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
-            row![
-                text("Terminal emulator")
-                    .style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
-                iced::widget::horizontal_space(),
-                pick_list(
-                    available_terminals,
-                    if config.terminal.is_empty() { None } else { Some(config.terminal.clone()) },
-                    Message::TerminalChanged,
-                )
-                .style(move |_, _| iced::widget::pick_list::Style {
-                    background: Background::Color(colors.surface),
-                    text_color: colors.text,
-                    placeholder_color: colors.dim_text,
-                    handle_color: colors.dim_text,
-                    border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
-                })
-                .width(200),
-            ]
-            .align_y(iced::Alignment::Center)
-            .spacing(12),
+            app_picker("Terminal emulator", available_terminals, &config.terminal, Message::TerminalChanged),
+            app_picker("Browser", available_browsers, &config.default_browser, Message::BrowserChanged),
+            app_picker("AI CLI (used by omegagiven-search)", available_ai_clis, &config.default_ai_cli, Message::AiCliChanged),
             text(format!(
-                "Its color scheme is regenerated from this theme on Apply & Save, for: {}.",
+                "Terminal color scheme is regenerated from this theme on Apply & Save, for: {}.",
                 crate::terminal_theme::SUPPORTED_TERMINALS.join(", "),
             ))
             .size(11)
@@ -321,7 +385,7 @@ pub fn view<'a>(
             container(text(value.to_string()).style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
                 .style(move |_| container::Style {
                     background: Some(Background::Color(colors.surface)),
-                    border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                    border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
                     ..Default::default()
                 })
                 .padding([4, 12]),
@@ -345,6 +409,9 @@ pub fn view<'a>(
             row![label("Border width (pixels)"), iced::widget::horizontal_space(),
                 spin(config.border_width, Message::BorderWidthMinus, Message::BorderWidthPlus)]
                 .align_y(iced::Alignment::Center).spacing(12),
+            row![label("Corner rounding (pixels)"), iced::widget::horizontal_space(),
+                spin(config.corner_radius as i32, Message::CornerRadiusMinus, Message::CornerRadiusPlus)]
+                .align_y(iced::Alignment::Center).spacing(12),
         ]
         .spacing(16).padding(20),
     )
@@ -361,7 +428,7 @@ pub fn view<'a>(
         .style(move |_, _| iced::widget::button::Style {
             background: Some(Background::Color(if is_current { colors.accent } else { colors.surface })),
             text_color: if is_current { colors.bar_bg } else { colors.text },
-            border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
             ..Default::default()
         })
         .on_press(Message::WaybarPositionChanged(value.to_string()))
@@ -377,7 +444,7 @@ pub fn view<'a>(
                 text_color: colors.text,
                 placeholder_color: colors.dim_text,
                 handle_color: colors.dim_text,
-                border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
             })
             .width(220)
             .into()
@@ -431,6 +498,10 @@ pub fn view<'a>(
             tz_pick(&config.clock_timezone, Box::new(|v| Message::ClockTimezoneSelected(v.to_string())))]
             .align_y(iced::Alignment::Center).spacing(12)
             .into(),
+        row![label("12-hour clock (non-military time)"), iced::widget::horizontal_space(),
+            toggler(config.clock_12h).on_toggle(Message::Clock12hToggled)]
+            .align_y(iced::Alignment::Center).spacing(12)
+            .into(),
     ];
     taskbar_col.append(&mut extra_clock_rows);
     taskbar_col.push(row![iced::widget::horizontal_space(), add_clock_btn].into());
@@ -443,7 +514,7 @@ pub fn view<'a>(
         .style(move |_, _| iced::widget::button::Style {
             background: Some(Background::Color(colors.accent)),
             text_color: colors.bar_bg,
-            border: Border { radius: 4.0.into(), ..Default::default() },
+            border: Border { radius: colors.radius.into(), ..Default::default() },
             ..Default::default()
         })
     } else {
@@ -516,7 +587,7 @@ pub fn view<'a>(
             text_color: colors.text,
             placeholder_color: colors.dim_text,
             handle_color: colors.dim_text,
-            border: Border { color: colors.border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
         })
         .width(200),
     ]
@@ -536,7 +607,253 @@ pub fn view<'a>(
     )
     .style(card_style).width(Length::Fill);
 
-    column![presets_card, colors_card, window_card, taskbar_card, mouse_card, terminal_card]
+    // ── Brightness ───────────────────────────────────────────────────────
+    let dim_or_text = move |t: &'a str| -> Element<'a, Message> {
+        text(t).style(move |_| iced::widget::text::Style {
+            color: Some(if has_backlight { colors.text } else { colors.dim_text }),
+        }).into()
+    };
+    let disabled_spin_btn = move |label_txt: &'static str| -> Element<'a, Message> {
+        button(text(label_txt).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }))
+            .style(move |_: &_, _| iced::widget::button::Style {
+                background: Some(Background::Color(colors.surface)),
+                text_color: colors.dim_text,
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                ..Default::default()
+            })
+            .into()
+    };
+    let brightness_row: Element<Message> = row![
+        dim_or_text("Screen brightness"),
+        iced::widget::horizontal_space(),
+        if has_backlight {
+            let el: Element<Message> = row![
+                spin(brightness, Message::BrightnessMinus, Message::BrightnessPlus),
+                text(format!("{brightness}%")).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
+            ].spacing(8).align_y(iced::Alignment::Center).into();
+            el
+        } else {
+            row![
+                disabled_spin_btn("-"),
+                container(text("—").style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }))
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(colors.surface)),
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                        ..Default::default()
+                    })
+                    .padding([4, 12]),
+                disabled_spin_btn("+"),
+            ].spacing(4).align_y(iced::Alignment::Center).into()
+        },
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(12)
+    .into();
+
+    let show_backlight_module = config.modules_left.iter().any(|m| m == "backlight")
+        || config.modules_center.iter().any(|m| m == "backlight")
+        || config.modules_right.iter().any(|m| m == "backlight");
+
+    let mut brightness_col: Vec<Element<Message>> = vec![
+        text("Brightness").size(15).style(move |_| iced::widget::text::Style { color: Some(colors.text) }).into(),
+        brightness_row,
+        row![
+            dim_or_text("Show as taskbar module"),
+            iced::widget::horizontal_space(),
+            toggler(show_backlight_module).on_toggle_maybe(
+                has_backlight.then_some(Message::BrightnessModuleToggled)
+            ),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(12)
+        .into(),
+    ];
+    if !has_backlight {
+        brightness_col.push(
+            text("No backlight device detected — this machine uses external monitors (DDC/OSD), not a controllable panel. Controls stay wired for laptop builds of this same app.")
+                .size(11)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+                .into()
+        );
+    }
+
+    let brightness_card = container(
+        column(brightness_col)
+        .spacing(16)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
+    // ── Wallpaper ────────────────────────────────────────────────────────
+    let is_image_mode = config.wallpaper_mode != "color";
+    let mode_btn = move |mode: &'static str, current: &'static str| -> Element<'a, Message> {
+        let is_active = mode == current;
+        let bg = if is_active { colors.accent } else { colors.surface };
+        let fg = if is_active { colors.bar_bg } else { colors.text };
+        button(text(mode).size(13).style(move |_| iced::widget::text::Style { color: Some(fg) }))
+            .style(move |_, _| iced::widget::button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: fg,
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                ..Default::default()
+            })
+            .on_press(Message::WallpaperModeChanged(mode.to_lowercase()))
+            .padding([6, 14])
+            .into()
+    };
+    let active_mode: &'static str = if is_image_mode { "Image" } else { "Color" };
+
+    let fit_btn = move |label: &'static str, value: &'static str| -> Element<'a, Message> {
+        let is_active = config.wallpaper_fit == value;
+        let bg = if is_active { colors.accent } else { colors.surface };
+        let fg = if is_active { colors.bar_bg } else { colors.text };
+        button(text(label).size(12).style(move |_| iced::widget::text::Style { color: Some(fg) }))
+            .style(move |_, _| iced::widget::button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: fg,
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                ..Default::default()
+            })
+            .on_press(Message::WallpaperFitChanged(value.to_string()))
+            .padding([6, 14])
+            .into()
+    };
+    let fit_row: Element<Message> = row![
+        text("Fit").style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
+        iced::widget::horizontal_space(),
+        fit_btn("Fill", "fill"),
+        fit_btn("Stretch", "stretch"),
+        fit_btn("Native Resolution", "center"),
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(12)
+    .into();
+
+    let wallpaper_body: Element<Message> = if is_image_mode {
+        let picker_row: Element<Message> = row![
+            app_picker("Image", available_wallpapers, &config.wallpaper_path, Message::WallpaperImageSelected),
+            button(text("Add Wallpaper…").size(12).style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                .style(btn_style)
+                .on_press(Message::WallpaperUploadStart)
+                .padding([6, 14]),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center)
+        .into();
+
+        if config.wallpaper_path.is_empty() {
+            picker_row
+        } else {
+            let preview = container(
+                image(config.wallpaper_path.clone())
+                    .width(240)
+                    .height(135)
+                    .content_fit(iced::ContentFit::Cover),
+            )
+            .style(move |_| container::Style {
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                ..Default::default()
+            })
+            .clip(true);
+
+            column![picker_row, preview].spacing(12).into()
+        }
+    } else {
+        let swatch_color = hex_to_color(&config.wallpaper_color);
+        let is_open = picker_key == Some("wallpaper_color");
+        let swatch_btn: Element<Message> = button(iced::widget::Space::new(28, 28))
+            .style(move |_, status| {
+                let border_col = if is_open {
+                    colors.accent
+                } else {
+                    match status {
+                        iced::widget::button::Status::Hovered => colors.accent,
+                        _ => Color::BLACK,
+                    }
+                };
+                iced::widget::button::Style {
+                    background: Some(Background::Color(swatch_color)),
+                    border: Border { color: border_col, width: if is_open { 2.0 } else { 1.0 }, radius: 14.0.into() },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::ColorPickerOpen("wallpaper_color".to_string()))
+            .into();
+        let hex_owned = config.wallpaper_color.clone();
+        let hex_input: Element<Message> = text_input("", &hex_owned)
+            .on_input(|v| Message::ColorChanged("wallpaper_color".to_string(), v))
+            .style(move |_, _| iced::widget::text_input::Style {
+                background: Background::Color(colors.surface),
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                icon: colors.dim_text,
+                placeholder: colors.dim_text,
+                value: colors.text,
+                selection: colors.accent,
+            })
+            .width(110)
+            .into();
+        row![swatch_btn, hex_input].spacing(12).align_y(iced::Alignment::Center).into()
+    };
+
+    let mut wallpaper_col: Vec<Element<Message>> = vec![
+        row![
+            text("Wallpaper").size(15).style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
+            iced::widget::horizontal_space(),
+            mode_btn("Image", active_mode),
+            mode_btn("Color", active_mode),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(12)
+        .into(),
+        wallpaper_body,
+    ];
+    if is_image_mode {
+        wallpaper_col.push(fit_row);
+    }
+    wallpaper_col.push(
+        text("Applied on Apply & Save, live via swaymsg + persisted to the sway config.")
+            .size(11)
+            .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+            .into(),
+    );
+
+    let wallpaper_card = container(
+        column(wallpaper_col)
+        .spacing(16)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
+    let greeter_card = container(
+        column![
+            text("Login Screen").size(15)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
+            row![
+                text("Copies your current desktop wallpaper to the LightDM login background.")
+                    .size(12)
+                    .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+                    .width(Length::Fill),
+                button(text("Sync Login Background").size(12)
+                    .style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                    .style(btn_style)
+                    .on_press(Message::SyncGreeterBackground)
+                    .padding([6, 14]),
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(12),
+            text("Opens a terminal asking for your sudo password (writes to /etc/lightdm).")
+                .size(11)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
+        ]
+        .spacing(12)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
+    column![presets_card, colors_card, window_card, taskbar_card, mouse_card, brightness_card, terminal_card, wallpaper_card, greeter_card]
         .spacing(16)
         .padding(20)
         .into()
