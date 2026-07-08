@@ -11,8 +11,10 @@ use iced::{
 use crate::config::Config;
 use crate::sway::{self, MonitorInfo};
 use crate::tabs::{self, Tab};
+use crate::tabs::bar::BarSection;
 use crate::tabs::theme::hex_to_color;
 use crate::tabs::sysmon;
+use og_config::{BarConfig, Edge};
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -150,6 +152,14 @@ pub enum Message {
     ModuleAdd(String),
     ModuleRemove(String),
 
+    // Bar tab (og-bar's BarConfig)
+    BarSetEdge(Edge),
+    BarSetThickness(u32),
+    BarSetItemSize(u32),
+    BarSetSpacing(u32),
+    BarSetPadding(u32),
+    BarToggleModule(BarSection, usize),
+
     // Hotkeys — bindings
     HotkeyStartCapture(usize),
     HotkeyKeyPressed(String),
@@ -212,6 +222,7 @@ pub enum Message {
 pub struct App {
     pub config: Config,
     pub saved_config: Config,
+    pub bar_config: BarConfig,
     pub current_tab: Tab,
     pub history: Vec<HistoryEntry>,
     // Display
@@ -299,6 +310,7 @@ impl App {
     pub fn new() -> (Self, Task<Message>) {
         let config = crate::config::load_and_seed();
         let saved = config.clone();
+        let bar_config = BarConfig::load();
         let hotkeys = load_sway_bindings();
         let variables = load_sway_variables();
         let monitors = sway::get_monitor_info();
@@ -331,6 +343,7 @@ impl App {
                 "power" => Some(Tab::Power),
                 "display" => Some(Tab::Display),
                 "theme" => Some(Tab::Theme),
+                "bar" => Some(Tab::Bar),
                 "notifications" => Some(Tab::Notifications),
                 _ => None,
             })
@@ -341,6 +354,7 @@ impl App {
             Self {
                 config,
                 saved_config: saved,
+                bar_config,
                 current_tab: initial_tab,
                 history: Vec::new(),
                 monitors,
@@ -477,6 +491,7 @@ impl App {
 
             Message::ApplyAndSave => {
                 let _ = self.config.save();
+                let _ = self.bar_config.save();
                 self.history.push(HistoryEntry {
                     timestamp: Local::now(),
                     snapshot: self.config.clone(),
@@ -856,6 +871,18 @@ impl App {
                 }
                 let _ = self.config.save();
                 sway::set_waybar_layout(&self.config);
+            }
+
+            // Bar tab — staged in-memory, written on ApplyAndSave like
+            // every other tab (unlike og-bar's own popout, which auto-saves
+            // every change instantly).
+            Message::BarSetEdge(edge) => { self.bar_config.position = edge; }
+            Message::BarSetThickness(v) => { self.bar_config.thickness = v; }
+            Message::BarSetItemSize(v) => { self.bar_config.item_size = v; }
+            Message::BarSetSpacing(v) => { self.bar_config.spacing = v; }
+            Message::BarSetPadding(v) => { self.bar_config.padding = v; }
+            Message::BarToggleModule(section, index) => {
+                tabs::bar::toggle_module(&mut self.bar_config, section, index);
             }
 
             // Hotkeys — bindings
@@ -1793,6 +1820,7 @@ impl App {
                 self.module_arrange_mode,
                 self.module_dragging.as_ref(),
             ),
+            Tab::Bar => tabs::bar::view(&self.bar_config, colors),
             Tab::History => tabs::history::view(&self.history, colors),
             Tab::SysMonitor => tabs::sysmon::view(colors, self.term_canvas.as_ref()),
         }

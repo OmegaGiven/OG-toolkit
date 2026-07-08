@@ -1,3 +1,4 @@
+pub mod bar;
 pub mod display;
 pub mod history;
 pub mod hotkeys;
@@ -17,6 +18,7 @@ pub enum Tab {
     Updates,
     Hotkeys,
     Theme,
+    Bar,
     History,
     SysMonitor,
     Notifications,
@@ -31,6 +33,7 @@ impl Tab {
             Tab::Updates,
             Tab::Hotkeys,
             Tab::Theme,
+            Tab::Bar,
             Tab::Notifications,
             Tab::History,
             Tab::SysMonitor,
@@ -45,6 +48,7 @@ impl Tab {
             Tab::Updates => "Updates",
             Tab::Hotkeys => "Hotkeys",
             Tab::Theme => "Theme",
+            Tab::Bar => "Bar",
             Tab::History => "History",
             Tab::SysMonitor => "System Monitor",
             Tab::Notifications => "Notifications",
