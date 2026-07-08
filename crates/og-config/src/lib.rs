@@ -367,7 +367,11 @@ impl Default for BarConfig {
             spacing: default_bar_spacing(),
             padding: default_bar_padding(),
             modules_start: vec![ModuleConfig { kind: ModuleKind::Workspaces, enabled: true, size_override: None }],
-            modules_center: vec![ModuleConfig { kind: ModuleKind::Clock { timezone: String::new() }, enabled: true, size_override: None }],
+            modules_center: vec![
+                ModuleConfig { kind: ModuleKind::Cpu, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Memory, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Clock { timezone: String::new() }, enabled: true, size_override: None },
+            ],
             modules_end: vec![
                 ModuleConfig {
                     kind: ModuleKind::Launcher {
@@ -389,6 +393,9 @@ impl Default for BarConfig {
                 },
                 ModuleConfig { kind: ModuleKind::Settings, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Tray, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Bluetooth, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Network, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Pulseaudio, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Power, enabled: true, size_override: None },
             ],
         }
