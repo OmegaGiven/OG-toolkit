@@ -276,3 +276,120 @@ impl Config {
         std::fs::write(&path, json).map_err(|e| e.to_string())
     }
 }
+
+fn bar_config_path() -> PathBuf {
+    let mut p = dirs_home();
+    p.push(".config/sway-power/bar-config.json");
+    p
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum Edge {
+    #[default]
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind")]
+pub enum ModuleKind {
+    Workspaces,
+    Clock { timezone: String },
+    Cpu,
+    Memory,
+    Tray,
+    Bluetooth,
+    Network,
+    Pulseaudio,
+    Launcher { icon: String, tooltip: String, command: String },
+    Settings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModuleConfig {
+    pub kind: ModuleKind,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Escape hatch from the bar's global `item_size` for one module.
+    #[serde(default)]
+    pub size_override: Option<u32>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BarConfig {
+    #[serde(default)]
+    pub position: Edge,
+    #[serde(default = "default_bar_thickness")]
+    pub thickness: u32,
+    #[serde(default = "default_item_size")]
+    pub item_size: u32,
+    #[serde(default = "default_bar_spacing")]
+    pub spacing: u32,
+    #[serde(default = "default_bar_padding")]
+    pub padding: u32,
+    #[serde(default)]
+    pub modules_start: Vec<ModuleConfig>,
+    #[serde(default)]
+    pub modules_center: Vec<ModuleConfig>,
+    #[serde(default)]
+    pub modules_end: Vec<ModuleConfig>,
+}
+
+fn default_bar_thickness() -> u32 {
+    32
+}
+
+fn default_item_size() -> u32 {
+    32
+}
+
+fn default_bar_spacing() -> u32 {
+    4
+}
+
+fn default_bar_padding() -> u32 {
+    4
+}
+
+impl Default for BarConfig {
+    fn default() -> Self {
+        Self {
+            position: Edge::Top,
+            thickness: default_bar_thickness(),
+            item_size: default_item_size(),
+            spacing: default_bar_spacing(),
+            padding: default_bar_padding(),
+            modules_start: vec![ModuleConfig { kind: ModuleKind::Workspaces, enabled: true, size_override: None }],
+            modules_center: vec![ModuleConfig { kind: ModuleKind::Clock { timezone: String::new() }, enabled: true, size_override: None }],
+            modules_end: vec![
+                ModuleConfig { kind: ModuleKind::Settings, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Tray, enabled: true, size_override: None },
+            ],
+        }
+    }
+}
+
+impl BarConfig {
+    pub fn load() -> Self {
+        let path = bar_config_path();
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let path = bar_config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(&path, json).map_err(|e| e.to_string())
+    }
+}
