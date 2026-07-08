@@ -6,7 +6,7 @@ pub struct AppEntry {
     pub exec: String,
 }
 
-/// Same `.desktop` scan as file-manager's "Open With" registry, trimmed to
+/// Same `.desktop` scan as og-files' "Open With" registry, trimmed to
 /// just what a launcher needs (name + exec, no mime types).
 pub fn load_app_registry() -> Vec<AppEntry> {
     let home = std::env::var("HOME").unwrap_or_default();

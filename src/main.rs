@@ -6,7 +6,7 @@ mod launch;
 use app::App;
 
 fn main() -> iced::Result {
-    iced::application("omegagiven-search", App::update, App::view)
+    iced::application("og-search", App::update, App::view)
         .subscription(App::subscription)
         // The window itself is a plain rectangle — our own container draws
         // the rounded card, so everything outside it (the corners, and any
@@ -23,7 +23,7 @@ fn main() -> iced::Result {
             transparent: true,
             position: iced::window::Position::Centered,
             platform_specific: iced::window::settings::PlatformSpecific {
-                application_id: "omegagiven-search".to_string(),
+                application_id: "og-search".to_string(),
                 ..Default::default()
             },
             ..Default::default()

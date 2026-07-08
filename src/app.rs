@@ -3,8 +3,9 @@ use iced::{Background, Border, Color, Element, Event, Length, Task};
 use iced::keyboard;
 
 use crate::apps::{filter_apps, load_app_registry, AppEntry};
-use crate::config::Config;
+use crate::config::{Config, APP_TINT_SEED};
 use crate::launch;
+use og_theme::{apply_color_variance, hex_to_color};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -13,6 +14,10 @@ pub enum Message {
     Activate,
     Close,
 }
+
+/// Window is a fixed 420px tall with no scrollable — this is how many rows
+/// fit before the list would start rendering off the bottom edge.
+const VISIBLE_ROWS: usize = 7;
 
 /// What pressing Enter on the currently-selected row actually does.
 enum Action<'a> {
@@ -27,17 +32,6 @@ pub struct App {
     apps: Vec<AppEntry>,
     query: String,
     selected: usize,
-}
-
-fn hex_to_color(hex: &str) -> Color {
-    let h = hex.trim_start_matches('#');
-    if h.len() < 6 {
-        return Color::BLACK;
-    }
-    let r = u8::from_str_radix(&h[0..2], 16).unwrap_or(128);
-    let g = u8::from_str_radix(&h[2..4], 16).unwrap_or(128);
-    let b = u8::from_str_radix(&h[4..6], 16).unwrap_or(128);
-    Color::from_rgb8(r, g, b)
 }
 
 impl App {
@@ -124,12 +118,12 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let bar_bg = crate::config::apply_color_variance(
-            hex_to_color(&self.config.bar_bg), crate::config::APP_TINT_SEED,
+        let bar_bg = apply_color_variance(
+            hex_to_color(&self.config.bar_bg), APP_TINT_SEED,
             self.config.color_variance_enabled, self.config.color_variance_amount,
         );
-        let sec_bg = crate::config::apply_color_variance(
-            hex_to_color(&self.config.sec_bg), crate::config::APP_TINT_SEED,
+        let sec_bg = apply_color_variance(
+            hex_to_color(&self.config.sec_bg), APP_TINT_SEED,
             self.config.color_variance_enabled, self.config.color_variance_amount,
         );
         let text_color = hex_to_color(&self.config.bar_text);
@@ -153,7 +147,16 @@ impl App {
             });
 
         let actions = self.actions();
-        let rows: Vec<Element<Message>> = actions.iter().enumerate().map(|(i, action)| {
+
+        // The list isn't in a scrollable — it's a fixed-height window — so
+        // without this, selecting past the last visible row just renders
+        // off the bottom edge instead of scrolling. Show a sliding window
+        // of rows around the selection instead, shifting up once the
+        // selection would fall past the last visible slot.
+        let scroll_offset = self.selected.saturating_sub(VISIBLE_ROWS.saturating_sub(1));
+        let visible = actions.iter().enumerate().skip(scroll_offset).take(VISIBLE_ROWS);
+
+        let rows: Vec<Element<Message>> = visible.map(|(i, action)| {
             let is_selected = i == self.selected;
             let (label, hint): (String, &str) = match action {
                 Action::GoAlias(alias) => (format!("Open go/{alias}"), "internal link"),

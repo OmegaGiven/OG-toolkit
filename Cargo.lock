@@ -1825,12 +1825,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "omegagiven-search"
+name = "og-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "og-search"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "og-config",
+ "og-theme",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "og-theme"
+version = "0.1.0"
+dependencies = [
+ "iced_core",
+ "og-config",
 ]
 
 [[package]]
@@ -2349,6 +2367,7 @@ version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
