@@ -8,7 +8,7 @@ mod settings;
 
 use iced_layershell::build_pattern::daemon;
 use iced_layershell::reexport::Anchor;
-use iced_layershell::settings::LayerShellSettings;
+use iced_layershell::settings::{LayerShellSettings, StartMode};
 
 use bar::Bar;
 use og_config::{BarConfig, Edge};
@@ -29,6 +29,11 @@ fn main() -> iced_layershell::Result {
             size,
             anchor,
             exclusive_zone: thickness as i32,
+            // One surface per connected output (waybar's own default
+            // behavior) instead of just whichever output is "active" —
+            // layershellev handles this itself, no manual output-tracking
+            // needed on our side (see PLAN.md section 10 / step 9 spike).
+            start_mode: StartMode::AllScreens,
             ..Default::default()
         })
         .style(bar::style)
