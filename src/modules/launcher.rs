@@ -2,7 +2,7 @@ use iced::widget::{button, container, text};
 use iced::{Background, Border, Color, Element, Length};
 
 use crate::message::Message;
-use crate::module::Module;
+use crate::module::{Module, Orientation};
 use og_theme::AppColors;
 
 pub struct Launcher {
@@ -17,7 +17,7 @@ impl Launcher {
 }
 
 impl Module for Launcher {
-    fn view(&self, colors: AppColors, size: u32) -> Element<'_, Message> {
+    fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
         button(
             container(text(self.icon.clone()).size(16).style(move |_| text::Style { color: Some(fg) }))

@@ -2,7 +2,7 @@ use iced::widget::{container, text};
 use iced::{Element, Length, Subscription};
 
 use crate::message::Message;
-use crate::module::Module;
+use crate::module::{Module, Orientation};
 use og_theme::AppColors;
 
 /// Non-empty `timezone` (multi-tz clocks) isn't wired yet — needs a tz
@@ -20,7 +20,7 @@ impl Clock {
 }
 
 impl Module for Clock {
-    fn view(&self, colors: AppColors, size: u32) -> Element<'_, Message> {
+    fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let now = chrono::Local::now();
         let label = now.format("%H:%M\n%m/%d").to_string();
         container(

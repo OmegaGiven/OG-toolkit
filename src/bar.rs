@@ -1,11 +1,11 @@
-use iced::widget::{container, row};
+use iced::widget::{column, container, row};
 use iced::{Element, Length, Subscription, Task};
 
 use og_config::{BarConfig, Config, ModuleConfig, ModuleKind};
 use og_theme::AppColors;
 
 use crate::message::Message;
-use crate::module::Module;
+use crate::module::{Module, Orientation};
 use crate::modules::clock::Clock;
 use crate::modules::launcher::Launcher;
 use crate::modules::workspaces::Workspaces;
@@ -88,28 +88,68 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
 
 pub fn view(bar: &Bar) -> Element<'_, Message> {
     let size = bar.bar_cfg.item_size;
-    let spacing = bar.bar_cfg.spacing;
+    let thickness = bar.bar_cfg.thickness as u16;
+    let spacing = bar.bar_cfg.spacing as u16;
+    let orientation = Orientation::from(bar.bar_cfg.position);
 
-    fn cell<'a>(m: &'a Box<dyn Module>, bar: &'a Bar, size: u32) -> Element<'a, Message> {
-        container(m.view(bar.colors, size))
-            .width(m.cell_width(size))
-            .height(bar.bar_cfg.thickness as u16)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .into()
+    // Main axis = the direction the bar runs (width for top/bottom, height
+    // for left/right). Cross axis is always the bar's fixed thickness.
+    fn cell<'a>(m: &'a Box<dyn Module>, bar: &'a Bar, size: u32, orientation: Orientation, thickness: u16) -> Element<'a, Message> {
+        let main_len = m.cell_length(size, orientation);
+        let content = m.view(bar.colors, size, orientation);
+        let c = container(content).center_x(Length::Fill).center_y(Length::Fill);
+        match orientation {
+            Orientation::Horizontal => c.width(main_len).height(thickness),
+            Orientation::Vertical => c.width(thickness).height(main_len),
+        }
+        .into()
     }
 
-    let start_row = row(bar.start.iter().map(|m| cell(m, bar, size))).spacing(spacing as u16);
-    let center_row = row(bar.center.iter().map(|m| cell(m, bar, size))).spacing(spacing as u16);
-    let end_row = row(bar.end.iter().map(|m| cell(m, bar, size))).spacing(spacing as u16);
+    fn section<'a>(
+        modules: &'a [Box<dyn Module>],
+        bar: &'a Bar,
+        size: u32,
+        orientation: Orientation,
+        thickness: u16,
+        spacing: u16,
+    ) -> Element<'a, Message> {
+        let cells = modules.iter().map(|m| cell(m, bar, size, orientation, thickness));
+        match orientation {
+            Orientation::Horizontal => row(cells).spacing(spacing).into(),
+            Orientation::Vertical => column(cells).spacing(spacing).into(),
+        }
+    }
 
-    let content = row![
-        container(start_row).width(Length::Fill).align_x(iced::alignment::Horizontal::Left),
-        container(center_row).width(Length::Fill).align_x(iced::alignment::Horizontal::Center),
-        container(end_row).width(Length::Fill).align_x(iced::alignment::Horizontal::Right),
-    ]
-    .padding(bar.bar_cfg.padding as u16)
-    .align_y(iced::Alignment::Center);
+    let content: Element<'_, Message> = match orientation {
+        Orientation::Horizontal => row![
+            container(section(&bar.start, bar, size, orientation, thickness, spacing))
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Left),
+            container(section(&bar.center, bar, size, orientation, thickness, spacing))
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center),
+            container(section(&bar.end, bar, size, orientation, thickness, spacing))
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right),
+        ]
+        .padding(bar.bar_cfg.padding as u16)
+        .align_y(iced::Alignment::Center)
+        .into(),
+        Orientation::Vertical => column![
+            container(section(&bar.start, bar, size, orientation, thickness, spacing))
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Top),
+            container(section(&bar.center, bar, size, orientation, thickness, spacing))
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Center),
+            container(section(&bar.end, bar, size, orientation, thickness, spacing))
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Bottom),
+        ]
+        .padding(bar.bar_cfg.padding as u16)
+        .align_x(iced::Alignment::Center)
+        .into(),
+    };
 
     container(content)
         .width(Length::Fill)

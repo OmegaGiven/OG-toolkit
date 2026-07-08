@@ -3,7 +3,7 @@
 //! integration already goes through `swaymsg`, so this keeps og-bar
 //! consistent instead of adding a bespoke IPC client for one module.
 
-use iced::widget::{button, container, row, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 use serde::Deserialize;
 use std::process::Stdio;
@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::message::Message;
-use crate::module::Module;
+use crate::module::{Module, Orientation};
 use og_theme::AppColors;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,11 +43,11 @@ impl Workspaces {
 }
 
 impl Module for Workspaces {
-    fn cell_width(&self, _size: u32) -> Length {
+    fn cell_length(&self, _size: u32, _orientation: Orientation) -> Length {
         Length::Shrink
     }
 
-    fn view(&self, colors: AppColors, size: u32) -> Element<'_, Message> {
+    fn view(&self, colors: AppColors, size: u32, orientation: Orientation) -> Element<'_, Message> {
         let buttons: Vec<Element<Message>> = self
             .workspaces
             .iter()
@@ -73,7 +73,10 @@ impl Module for Workspaces {
             })
             .collect();
 
-        row(buttons).spacing(2).into()
+        match orientation {
+            Orientation::Horizontal => row(buttons).spacing(2).into(),
+            Orientation::Vertical => column(buttons).spacing(2).into(),
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
