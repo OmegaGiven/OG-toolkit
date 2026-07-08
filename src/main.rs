@@ -2,8 +2,10 @@ mod bar;
 mod message;
 mod module;
 mod modules;
+mod popup;
+mod power;
 
-use iced_layershell::build_pattern::application;
+use iced_layershell::build_pattern::daemon;
 use iced_layershell::reexport::Anchor;
 use iced_layershell::settings::LayerShellSettings;
 
@@ -21,7 +23,7 @@ fn main() -> iced_layershell::Result {
         Edge::Right => (Some((thickness, 0)), Anchor::Right | Anchor::Top | Anchor::Bottom),
     };
 
-    application("og-bar", bar::update, bar::view)
+    daemon("og-bar", bar::update, bar::view, bar::remove_id)
         .layer_settings(LayerShellSettings {
             size,
             anchor,

@@ -1,7 +1,9 @@
 use iced::widget::{column, container, row};
 use iced::{Element, Length, Subscription, Task};
 
-use og_config::{BarConfig, Config, ModuleConfig, ModuleKind};
+use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
+
+use og_config::{BarConfig, Config, Edge, ModuleConfig, ModuleKind};
 use og_theme::AppColors;
 
 use crate::message::Message;
@@ -9,6 +11,8 @@ use crate::module::{Module, Orientation};
 use crate::modules::clock::Clock;
 use crate::modules::launcher::Launcher;
 use crate::modules::workspaces::Workspaces;
+use crate::popup::{PopupKind, PopupState};
+use crate::power::PowerButton;
 
 fn build_modules(list: &[ModuleConfig]) -> Vec<Box<dyn Module>> {
     list.iter()
@@ -20,6 +24,7 @@ fn build_modules(list: &[ModuleConfig]) -> Vec<Box<dyn Module>> {
                 ModuleKind::Launcher { icon, command, .. } => {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))
                 }
+                ModuleKind::Power => Some(Box::new(PowerButton)),
                 // Cpu/Memory/Tray/Bluetooth/Network/Pulseaudio/Settings: later build steps.
                 _ => None,
             }
@@ -33,6 +38,7 @@ pub struct Bar {
     start: Vec<Box<dyn Module>>,
     center: Vec<Box<dyn Module>>,
     end: Vec<Box<dyn Module>>,
+    popup: Option<PopupState>,
 }
 
 impl Bar {
@@ -45,6 +51,7 @@ impl Bar {
             end: build_modules(&bar_cfg.modules_end),
             colors,
             bar_cfg,
+            popup: None,
         };
         (bar, Task::none())
     }
@@ -55,6 +62,12 @@ impl Bar {
 
     fn all_modules(&self) -> impl Iterator<Item = &Box<dyn Module>> {
         self.start.iter().chain(self.center.iter()).chain(self.end.iter())
+    }
+}
+
+pub fn remove_id(bar: &mut Bar, id: iced::window::Id) {
+    if bar.popup.as_ref().is_some_and(|p| p.id == id) {
+        bar.popup = None;
     }
 }
 
@@ -77,6 +90,31 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 .arg(format!("setsid {cmd} >/dev/null 2>&1 &"))
                 .spawn();
         }
+        Message::OpenPowerMenu => {
+            let id = iced::window::Id::unique();
+            bar.popup = Some(PopupState { id, kind: PopupKind::Power });
+            // Top/vertical bars: menu should open below the click point.
+            // Bottom bar: open above it instead, so it doesn't run off-screen.
+            let direction = match bar.bar_cfg.position {
+                Edge::Bottom => MenuDirection::Up,
+                Edge::Top | Edge::Left | Edge::Right => MenuDirection::Down,
+            };
+            return Task::done(Message::NewMenu {
+                settings: IcedNewMenuSettings { size: (140, 190), direction },
+                id,
+            });
+        }
+        Message::PowerAction(action) => {
+            action.run();
+            if let Some(popup) = bar.popup.take() {
+                return Task::done(Message::RemoveWindow(popup.id));
+            }
+        }
+        Message::ClosePopup => {
+            if let Some(popup) = bar.popup.take() {
+                return Task::done(Message::RemoveWindow(popup.id));
+            }
+        }
         _ => {}
     }
 
@@ -86,7 +124,18 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
     Task::none()
 }
 
-pub fn view(bar: &Bar) -> Element<'_, Message> {
+pub fn view(bar: &Bar, id: iced::window::Id) -> Element<'_, Message> {
+    if let Some(popup) = &bar.popup {
+        if popup.id == id {
+            return match popup.kind {
+                PopupKind::Power => crate::power::popup_view(bar.colors),
+            };
+        }
+    }
+    bar_view(bar)
+}
+
+fn bar_view(bar: &Bar) -> Element<'_, Message> {
     let size = bar.bar_cfg.item_size;
     let thickness = bar.bar_cfg.thickness as u16;
     let spacing = bar.bar_cfg.spacing as u16;
@@ -162,7 +211,23 @@ pub fn view(bar: &Bar) -> Element<'_, Message> {
 }
 
 pub fn subscription(bar: &Bar) -> Subscription<Message> {
-    Subscription::batch(bar.all_modules().map(|m| m.subscription()))
+    let escape_closes_popup = iced::event::listen_with(|event, _status, _id| {
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            ..
+        }) = event
+        {
+            Some(Message::ClosePopup)
+        } else {
+            None
+        }
+    });
+
+    Subscription::batch(
+        bar.all_modules()
+            .map(|m| m.subscription())
+            .chain(std::iter::once(escape_closes_popup)),
+    )
 }
 
 pub fn style(bar: &Bar, _theme: &iced::Theme) -> iced_layershell::Appearance {
