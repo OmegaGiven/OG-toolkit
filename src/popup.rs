@@ -10,6 +10,7 @@ use iced::window;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupKind {
     Power,
+    Settings,
 }
 
 #[derive(Debug, Clone)]

@@ -13,6 +13,7 @@ use crate::modules::launcher::Launcher;
 use crate::modules::workspaces::Workspaces;
 use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
+use crate::settings::{Section, SettingsButton};
 
 fn build_modules(list: &[ModuleConfig]) -> Vec<Box<dyn Module>> {
     list.iter()
@@ -25,11 +26,20 @@ fn build_modules(list: &[ModuleConfig]) -> Vec<Box<dyn Module>> {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))
                 }
                 ModuleKind::Power => Some(Box::new(PowerButton)),
-                // Cpu/Memory/Tray/Bluetooth/Network/Pulseaudio/Settings: later build steps.
+                ModuleKind::Settings => Some(Box::new(SettingsButton)),
+                // Cpu/Memory/Tray/Bluetooth/Network/Pulseaudio: later build steps.
                 _ => None,
             }
         })
         .collect()
+}
+
+fn section_list(bar_cfg: &mut BarConfig, section: Section) -> &mut Vec<ModuleConfig> {
+    match section {
+        Section::Start => &mut bar_cfg.modules_start,
+        Section::Center => &mut bar_cfg.modules_center,
+        Section::End => &mut bar_cfg.modules_end,
+    }
 }
 
 pub struct Bar {
@@ -115,6 +125,59 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 return Task::done(Message::RemoveWindow(popup.id));
             }
         }
+        Message::OpenSettingsPopup => {
+            let id = iced::window::Id::unique();
+            bar.popup = Some(PopupState { id, kind: PopupKind::Settings });
+            let direction = match bar.bar_cfg.position {
+                Edge::Bottom => MenuDirection::Up,
+                Edge::Top | Edge::Left | Edge::Right => MenuDirection::Down,
+            };
+            return Task::done(Message::NewMenu {
+                settings: IcedNewMenuSettings { size: (260, 420), direction },
+                id,
+            });
+        }
+        // Edge/thickness need a real wlr layer-shell relayout this process
+        // can't do to its own already-mapped surface — they're staged here
+        // and only take effect once Apply & Save respawns the bar.
+        Message::SetEdge(edge) => {
+            bar.bar_cfg.position = *edge;
+            let _ = bar.bar_cfg.save();
+        }
+        Message::SetThickness(v) => {
+            bar.bar_cfg.thickness = *v;
+            let _ = bar.bar_cfg.save();
+        }
+        // item_size/spacing/padding are read straight out of bar_cfg by
+        // bar_view() every frame, so these apply live with no extra work.
+        Message::SetItemSize(v) => {
+            bar.bar_cfg.item_size = *v;
+            let _ = bar.bar_cfg.save();
+        }
+        Message::SetSpacing(v) => {
+            bar.bar_cfg.spacing = *v;
+            let _ = bar.bar_cfg.save();
+        }
+        Message::SetPadding(v) => {
+            bar.bar_cfg.padding = *v;
+            let _ = bar.bar_cfg.save();
+        }
+        Message::ToggleModule(section, index) => {
+            if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
+                m.enabled = !m.enabled;
+            }
+            let _ = bar.bar_cfg.save();
+            bar.start = build_modules(&bar.bar_cfg.modules_start);
+            bar.center = build_modules(&bar.bar_cfg.modules_center);
+            bar.end = build_modules(&bar.bar_cfg.modules_end);
+        }
+        Message::ApplyRelayout => {
+            let _ = bar.bar_cfg.save();
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe).spawn();
+            }
+            std::process::exit(0);
+        }
         _ => {}
     }
 
@@ -129,6 +192,7 @@ pub fn view(bar: &Bar, id: iced::window::Id) -> Element<'_, Message> {
         if popup.id == id {
             return match popup.kind {
                 PopupKind::Power => crate::power::popup_view(bar.colors),
+                PopupKind::Settings => crate::settings::popup_view(bar.colors, &bar.bar_cfg),
             };
         }
     }
