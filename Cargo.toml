@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/og-config",
+    "crates/og-theme",
+    "crates/og-wayland",
+]
