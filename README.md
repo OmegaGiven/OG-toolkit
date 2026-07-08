@@ -1,4 +1,4 @@
-# App Store
+# App Manager
 
 A native GUI app store for Arch Linux — search, install, and remove software across **pacman**, **AUR** (via `yay`), and **Flatpak** from one window, with a two-tier uninstall (app only, or app + its config/data).
 
@@ -16,7 +16,7 @@ Built in Rust with [iced](https://iced.rs), matching the look of the rest of the
 
 ```sh
 cargo build --release
-cp target/release/app-store ~/.local/bin/
+cp target/release/app-manager ~/.local/bin/
 ```
 
 ## Requirements

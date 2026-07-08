@@ -200,7 +200,7 @@ pub fn list_installed_all() -> Vec<AppEntry> {
 // ── Install ──────────────────────────────────────────────────────────────
 
 /// Interactive installs need a real terminal (sudo password, pacman/yay
-/// conflict prompts) — same spawn pattern used throughout settings-manager
+/// conflict prompts) — same spawn pattern used throughout og-apps
 /// (e.g. its `update_pacman`/`wifi_connect`): open the user's terminal,
 /// run the command, pause so errors are visible, fire-and-forget from here.
 fn spawn_terminal(terminal: &str, script: &str) {

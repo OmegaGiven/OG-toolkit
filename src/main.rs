@@ -5,7 +5,7 @@ mod pkg;
 use app::App;
 
 fn main() -> iced::Result {
-    iced::application("App Store", App::update, App::view)
+    iced::application("OG Apps", App::update, App::view)
         // Our own container draws the rounded card + border; everything
         // outside it (the window's corners) needs the renderer's clear
         // color to be fully transparent too, not just the surface flagged
@@ -20,7 +20,7 @@ fn main() -> iced::Result {
             transparent: true,
             position: iced::window::Position::Centered,
             platform_specific: iced::window::settings::PlatformSpecific {
-                application_id: "app-store".to_string(),
+                application_id: "og-apps".to_string(),
                 ..Default::default()
             },
             ..Default::default()

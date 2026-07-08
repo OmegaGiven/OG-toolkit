@@ -1,44 +1,14 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Background, Border, Color, Element, Length, Task};
 
-use crate::config::{apply_color_variance, Config, APP_TINT_SEED};
+use crate::config::{Config, APP_TINT_SEED};
 use crate::pkg::{self, AppEntry, Source};
 
-fn hex_to_color(hex: &str) -> Color {
-    let h = hex.trim_start_matches('#');
-    if h.len() < 6 {
-        return Color::BLACK;
-    }
-    let r = u8::from_str_radix(&h[0..2], 16).unwrap_or(128);
-    let g = u8::from_str_radix(&h[2..4], 16).unwrap_or(128);
-    let b = u8::from_str_radix(&h[4..6], 16).unwrap_or(128);
-    Color::from_rgb8(r, g, b)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct AppColors {
-    pub bar_bg: Color,
-    pub sec_bg: Color,
-    pub text: Color,
-    pub dim_text: Color,
-    pub accent: Color,
-    pub border: Color,
-    pub surface: Color,
-    pub radius: f32,
-}
-
-impl AppColors {
-    fn from_config(cfg: &Config) -> Self {
-        let bar_bg = apply_color_variance(hex_to_color(&cfg.bar_bg), APP_TINT_SEED, cfg.color_variance_enabled, cfg.color_variance_amount);
-        let sec_bg = apply_color_variance(hex_to_color(&cfg.sec_bg), APP_TINT_SEED, cfg.color_variance_enabled, cfg.color_variance_amount);
-        let text = hex_to_color(&cfg.bar_text);
-        let accent = hex_to_color(&cfg.accent);
-        let dim_text = Color { a: 0.55, ..text };
-        let border = Color { a: 0.22, ..text };
-        let surface = Color { r: text.r * 0.08 + bar_bg.r * 0.92, g: text.g * 0.08 + bar_bg.g * 0.92, b: text.b * 0.08 + bar_bg.b * 0.92, a: 1.0 };
-        Self { bar_bg, sec_bg, text, dim_text, accent, border, surface, radius: cfg.corner_radius }
-    }
-}
+/// `AppColors` now comes from the shared `og-theme` crate — every
+/// OG-toolkit app derives its widget colors from the same definition, so
+/// adding a field there (like `accent2`/gradient support) benefits this
+/// app too without needing the same hand-edit copied in here.
+pub use og_theme::AppColors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -212,7 +182,7 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let colors = AppColors::from_config(&self.config);
+        let colors = AppColors::from_config(&self.config, APP_TINT_SEED);
 
         let card_style = move |_: &_| container::Style {
             background: Some(Background::Color(colors.sec_bg)),
@@ -254,7 +224,7 @@ impl App {
         };
 
         let header = row![
-            text("App Store").size(20).style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
+            text("OG Apps").size(20).style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
             iced::widget::horizontal_space(),
             tab_btn("Browse", Tab::Browse, self.tab),
             tab_btn("Installed", Tab::Installed, self.tab),
