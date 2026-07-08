@@ -368,6 +368,24 @@ impl Default for BarConfig {
             modules_start: vec![ModuleConfig { kind: ModuleKind::Workspaces, enabled: true, size_override: None }],
             modules_center: vec![ModuleConfig { kind: ModuleKind::Clock { timezone: String::new() }, enabled: true, size_override: None }],
             modules_end: vec![
+                ModuleConfig {
+                    kind: ModuleKind::Launcher {
+                        icon: "./".to_string(),
+                        tooltip: "Open Terminal".to_string(),
+                        command: "alacritty".to_string(),
+                    },
+                    enabled: true,
+                    size_override: None,
+                },
+                ModuleConfig {
+                    kind: ModuleKind::Launcher {
+                        icon: "".to_string(),
+                        tooltip: "Open Claude CLI".to_string(),
+                        command: "alacritty -e claude --dangerously-skip-permissions".to_string(),
+                    },
+                    enabled: true,
+                    size_override: None,
+                },
                 ModuleConfig { kind: ModuleKind::Settings, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Tray, enabled: true, size_override: None },
             ],
