@@ -7,7 +7,12 @@ edition = "2021"
 name = "og-bar"
 path = "src/main.rs"
 
+[[bin]]
+name = "tray-spike"
+path = "src/bin/tray_spike.rs"
+
 [dependencies]
+system-tray = "0.8"
 og-config = { path = "../OG-toolkit/crates/og-config" }
 og-theme = { path = "../OG-toolkit/crates/og-theme" }
 iced = { version = "0.13", default-features = false, features = ["tiny-skia", "advanced", "tokio"] }
