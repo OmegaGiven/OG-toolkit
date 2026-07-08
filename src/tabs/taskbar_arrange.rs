@@ -25,7 +25,7 @@ const REMOVE_ZONE_W: f32 = 22.0;
 /// up blank since custom modules have no meaning without that block.
 pub const ADDABLE_MODULES: &[&str] = &[
     "sway/workspaces", "tray", "clock", "cpu", "memory", "network", "bluetooth", "pulseaudio", "backlight",
-    "custom/sysctl", "custom/claude", "custom/settings", "custom/app-store", "custom/terminal",
+    "custom/sysctl", "custom/claude", "custom/settings", "custom/og-apps", "custom/terminal",
     "custom/power", "custom/clipboard", "custom/notifications",
 ];
 

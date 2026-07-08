@@ -24,71 +24,23 @@ pub struct HistoryEntry {
 
 /// The name each app seeds its per-app tint hash with when "color variance"
 /// is enabled — keep these stable, changing one shifts that app's tint.
-pub const APP_TINT_SEED: &str = "settings-manager";
+const APP_TINT_SEED: &str = "og-settings";
 
-/// Deterministic small per-app background tint so windows sharing this
-/// theme are easier to tell apart at a glance without losing the shared
-/// base-color identity — not random, the same app name always gets the
-/// same shift. Mirrored in file-manager/omegagiven-search/galias's own
-/// config loaders (no shared crate between these projects).
-pub fn apply_color_variance(color: Color, seed: &str, enabled: bool, amount: f32) -> Color {
-    if !enabled || amount <= 0.0 {
-        return color;
-    }
-    let hash: u32 = seed.bytes().fold(5381u32, |h, b| h.wrapping_mul(33).wrapping_add(b as u32));
-    let t = (hash % 1000) as f32 / 1000.0;
-    let shift = (t * 2.0 - 1.0) * amount;
-    let clamp = |v: f32| (v + shift).clamp(0.0, 1.0);
-    Color { r: clamp(color.r), g: clamp(color.g), b: clamp(color.b), a: color.a }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct AppColors {
-    pub bar_bg: Color,
-    pub sec_bg: Color,
-    pub text: Color,
-    pub dim_text: Color,
-    pub accent: Color,
-    pub border: Color,
-    pub surface: Color,
-    pub header_btn_bg: Color,
-    pub radius: f32,
-}
-
-impl AppColors {
-    pub fn from_config(cfg: &Config) -> Self {
-        let bar_bg = apply_color_variance(
-            hex_to_color(&cfg.bar_bg), APP_TINT_SEED, cfg.color_variance_enabled, cfg.color_variance_amount,
-        );
-        let sec_bg = apply_color_variance(
-            hex_to_color(&cfg.sec_bg), APP_TINT_SEED, cfg.color_variance_enabled, cfg.color_variance_amount,
-        );
-        let text = hex_to_color(&cfg.bar_text);
-        let accent = hex_to_color(&cfg.accent);
-
-        let dim_text = Color { a: 0.55, ..text };
-        let border = Color { a: 0.22, ..text };
-        let surface = Color {
-            r: text.r * 0.08 + bar_bg.r * 0.92,
-            g: text.g * 0.08 + bar_bg.g * 0.92,
-            b: text.b * 0.08 + bar_bg.b * 0.92,
-            a: 1.0,
-        };
-        let header_btn_bg = Color {
-            r: text.r * 0.12 + bar_bg.r * 0.88,
-            g: text.g * 0.12 + bar_bg.g * 0.88,
-            b: text.b * 0.12 + bar_bg.b * 0.88,
-            a: 1.0,
-        };
-
-        Self { bar_bg, sec_bg, text, dim_text, accent, border, surface, header_btn_bg, radius: cfg.corner_radius }
-    }
-}
+/// `AppColors`, `hex_to_color`, and `apply_color_variance` now live in the
+/// shared `og-theme` crate — every OG-toolkit app derives its widget
+/// colors from the same definition, so adding a field (like `accent2` or
+/// gradient support was) benefits all of them at once instead of needing
+/// the same hand-edit copied into each app's `app.rs`.
+pub use og_theme::AppColors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateSection { Pacman, Aur, Flatpak }
 
 // ── Messages ───────────────────────────────────────────────────────────────
+
+fn search_input_id() -> iced::widget::text_input::Id {
+    iced::widget::text_input::Id::new("search-bar")
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -97,6 +49,15 @@ pub enum Message {
     Close,
     SearchToggle,
     SearchQueryChanged(String),
+
+    // Notifications
+    NotificationsMasterToggled(bool),
+    NotifFxEnabledToggled(bool),
+    NotifFxEffectSelected(String),
+    NotifFxColorChanged(String),
+    NotifFxDurationMinus,
+    NotifFxDurationPlus,
+    NotifFxTestNotification,
 
     // Power
     MonitorSleepToggled(bool),
@@ -174,6 +135,7 @@ pub enum Message {
     CornerRadiusMinus,
     CornerRadiusPlus,
     ColorVarianceToggled(bool),
+    GradientToggled(bool),
     ColorVarianceAmountMinus,
     ColorVarianceAmountPlus,
     ClockAdd,
@@ -211,6 +173,7 @@ pub enum Message {
     BrowserChanged(String),
     AiCliChanged(String),
     MouseSensitivityChanged(f32),
+    UnfocusedOpacityChanged(f32),
     CursorSizeMinus,
     CursorSizePlus,
     CursorThemeChanged(String),
@@ -334,7 +297,7 @@ pub struct ModuleDrag {
 
 impl App {
     pub fn new() -> (Self, Task<Message>) {
-        let config = Config::load();
+        let config = crate::config::load_and_seed();
         let saved = config.clone();
         let hotkeys = load_sway_bindings();
         let variables = load_sway_variables();
@@ -345,11 +308,40 @@ impl App {
         let terminals = detect_terminals(&config.terminal);
         let browsers = detect_browsers(&config.default_browser);
         let ai_clis = detect_ai_clis(&config.default_ai_cli);
+
+        // og-notify always autostarts at login now (no user-facing
+        // toggle for that anymore) — the "Enable notification effects"
+        // toggle controls whether it's actually running/showing anything.
+        sway::set_notification_fx_autostart(true);
+        sway::ensure_mako_dnd_mode();
+        sway::ensure_opacity_autostart();
+        sway::start_opacity_daemon();
+
+        // `--tab <name>` deep-links a fresh launch straight to a tab —
+        // used by waybar's network/bluetooth buttons so clicking one goes
+        // straight to the Network tab instead of always landing on Power.
+        // Only affects a brand-new process; focusing an already-running
+        // window doesn't change its current tab (matches how every other
+        // "focus-or-launch" waybar button already behaves here).
+        let initial_tab = std::env::args()
+            .position(|a| a == "--tab")
+            .and_then(|i| std::env::args().nth(i + 1))
+            .and_then(|name| match name.as_str() {
+                "network" => Some(Tab::Network),
+                "power" => Some(Tab::Power),
+                "display" => Some(Tab::Display),
+                "theme" => Some(Tab::Theme),
+                "notifications" => Some(Tab::Notifications),
+                _ => None,
+            })
+            .unwrap_or(Tab::Power);
+        let initial_tab_is_network = initial_tab == Tab::Network;
+
         (
             Self {
                 config,
                 saved_config: saved,
-                current_tab: Tab::Power,
+                current_tab: initial_tab,
                 history: Vec::new(),
                 monitors,
                 hotkey_bindings: hotkeys,
@@ -403,7 +395,7 @@ impl App {
                 search_open: false,
                 search_query: String::new(),
             },
-            Task::none(),
+            if initial_tab_is_network { load_network_data() } else { Task::none() },
         )
     }
 
@@ -502,6 +494,8 @@ impl App {
                 self.search_open = !self.search_open;
                 if !self.search_open {
                     self.search_query.clear();
+                } else {
+                    return iced::widget::text_input::focus(search_input_id());
                 }
             }
             Message::SearchQueryChanged(q) => { self.search_query = q; }
@@ -778,6 +772,7 @@ impl App {
                 self.config.corner_radius += 2.0;
             }
             Message::ColorVarianceToggled(v) => { self.config.color_variance_enabled = v; }
+            Message::GradientToggled(v) => { self.config.gradient_enabled = v; }
             Message::ColorVarianceAmountMinus => {
                 self.config.color_variance_amount = (self.config.color_variance_amount - 0.01).max(0.0);
             }
@@ -947,6 +942,7 @@ impl App {
                     "sec_bg" => self.config.sec_bg = val,
                     "bar_text" => self.config.bar_text = val,
                     "accent" => self.config.accent = val,
+                    "accent2" => self.config.accent2 = val,
                     "inactive_color" => self.config.inactive_color = val,
                     "urgent_color" => self.config.urgent_color = val,
                     "wallpaper_color" => self.config.wallpaper_color = val,
@@ -960,6 +956,11 @@ impl App {
                 self.config.mouse_sensitivity = v;
                 let _ = self.config.save();
                 sway::set_mouse_sensitivity(v);
+            }
+            Message::UnfocusedOpacityChanged(v) => {
+                self.config.unfocused_opacity = v;
+                let _ = self.config.save();
+                sway::apply_unfocused_opacity_now(v);
             }
             Message::CursorSizeMinus => {
                 self.config.cursor_size = (self.config.cursor_size - 4).max(8);
@@ -976,12 +977,50 @@ impl App {
                 let _ = self.config.save();
                 sway::set_cursor(&self.config.cursor_theme, self.config.cursor_size);
             }
+            Message::NotifFxEnabledToggled(v) => {
+                self.config.notif_fx_enabled = v;
+                let _ = self.config.save();
+                if v {
+                    sway::start_notification_fx();
+                } else {
+                    sway::stop_notification_fx();
+                }
+            }
+            Message::NotifFxEffectSelected(v) => {
+                self.config.notif_fx_effect = v;
+                let _ = self.config.save();
+            }
+            Message::NotifFxColorChanged(v) => {
+                self.config.notif_fx_color = v;
+                let _ = self.config.save();
+            }
+            Message::NotifFxDurationMinus => {
+                self.config.notif_fx_duration_ms = self.config.notif_fx_duration_ms.saturating_sub(200).max(400);
+                let _ = self.config.save();
+            }
+            Message::NotifFxDurationPlus => {
+                self.config.notif_fx_duration_ms = (self.config.notif_fx_duration_ms + 200).min(4000);
+                let _ = self.config.save();
+            }
+            Message::NotificationsMasterToggled(v) => {
+                sway::set_system_notifications_enabled(v);
+            }
+            Message::NotifFxTestNotification => {
+                let home = crate::config::dirs_home();
+                let _ = std::process::Command::new(home.join(".local/bin/og-notify"))
+                    .arg("--preview")
+                    .spawn();
+                let _ = std::process::Command::new("notify-send")
+                    .args(["OG Settings", "Notification effect test"])
+                    .spawn();
+            }
             Message::ColorPickerOpen(key) => {
                 let current_hex = match key.as_str() {
                     "bar_bg" => &self.config.bar_bg,
                     "sec_bg" => &self.config.sec_bg,
                     "bar_text" => &self.config.bar_text,
                     "accent" => &self.config.accent,
+                    "accent2" => &self.config.accent2,
                     "inactive_color" => &self.config.inactive_color,
                     "urgent_color" => &self.config.urgent_color,
                     "wallpaper_color" => &self.config.wallpaper_color,
@@ -1019,6 +1058,7 @@ impl App {
                         "sec_bg" => self.config.sec_bg = hex,
                         "bar_text" => self.config.bar_text = hex,
                         "accent" => self.config.accent = hex,
+                        "accent2" => self.config.accent2 = hex,
                         "inactive_color" => self.config.inactive_color = hex,
                         "urgent_color" => self.config.urgent_color = hex,
                         "wallpaper_color" => self.config.wallpaper_color = hex,
@@ -1185,8 +1225,7 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let colors = AppColors::from_config(&self.config);
-        let bar_bg = colors.bar_bg;
+        let colors = AppColors::from_config(&self.config, APP_TINT_SEED);
         let accent = colors.accent;
 
         let searching = self.search_open && !self.search_query.trim().is_empty();
@@ -1211,7 +1250,7 @@ impl App {
 
         let base = container(main_content)
             .style(move |_| container::Style {
-                background: Some(Background::Color(bar_bg)),
+                background: Some(colors.bg_fill),
                 ..Default::default()
             })
             .width(Length::Fill)
@@ -1331,7 +1370,7 @@ impl App {
             text("Apply & Save").style(move |_| iced::widget::text::Style { color: Some(c.bar_bg) })
         )
         .style(move |_, _| iced::widget::button::Style {
-            background: Some(Background::Color(c.accent)),
+            background: Some(c.accent_fill),
             text_color: c.bar_bg,
             border: Border { radius: colors.radius.into(), ..Default::default() },
             ..Default::default()
@@ -1357,6 +1396,7 @@ impl App {
 
         let center: Element<Message> = if self.search_open {
             text_input("Search all settings…", &self.search_query)
+                .id(search_input_id())
                 .on_input(Message::SearchQueryChanged)
                 .style(move |_, _| iced::widget::text_input::Style {
                     background: Background::Color(c.surface),
@@ -1369,7 +1409,7 @@ impl App {
                 .width(320)
                 .into()
         } else {
-            text("Settings Manager")
+            text("OG Settings")
                 .size(16)
                 .style(move |_| iced::widget::text::Style { color: Some(c.text) })
                 .into()
@@ -1706,6 +1746,7 @@ impl App {
 
     fn tab_content<'a>(&'a self, colors: AppColors) -> Element<'a, Message> {
         match self.current_tab {
+            Tab::Notifications => tabs::notifications::view(&self.config, colors, sway::is_notification_fx_running(), sway::is_notifications_enabled()),
             Tab::Power => tabs::power::view(&self.config, colors, &self.startup_execs, &self.systemd_services, &self.system_services, self.power_selected),
             Tab::Display => tabs::display::view(
                 &self.config, colors, &self.monitors, self.arrange_mode,
@@ -2290,10 +2331,10 @@ fn parse_sway_bindings(content: &str) -> Vec<(String, String)> {
     bindings
 }
 
-const VAR_START: &str = "# settings-manager variables start";
-const VAR_END: &str = "# settings-manager variables end";
-const BND_START: &str = "# settings-manager bindings start";
-const BND_END: &str = "# settings-manager bindings end";
+const VAR_START: &str = "# og-settings variables start";
+const VAR_END: &str = "# og-settings variables end";
+const BND_START: &str = "# og-settings bindings start";
+const BND_END: &str = "# og-settings bindings end";
 
 /// Rewrites the sway config with the edited variables and bindings.
 ///

@@ -206,6 +206,7 @@ pub fn view<'a>(
         ("sec_bg",         &config.sec_bg,         "Secondary background", "Panel sections · Focused window title bg"),
         ("bar_text",       &config.bar_text,       "Text",                 "Waybar text · Window title text"),
         ("accent",         &config.accent,         "Accent",               "Waybar active · Focused border & indicator"),
+        ("accent2",        &config.accent2,        "Secondary Accent",     "Unfocused workspace numbers/icons · Settings Manager box borders"),
         ("inactive_color", &config.inactive_color, "Inactive",             "Inactive & unfocused window borders"),
         ("urgent_color",   &config.urgent_color,   "Urgent",               "Urgent window border & highlight"),
     ];
@@ -322,6 +323,20 @@ pub fn view<'a>(
             .into()
         );
     }
+    colors_col.push(
+        row![
+            label_pre_spin("Gradient background & accent"), iced::widget::horizontal_space(),
+            toggler(config.gradient_enabled).on_toggle(Message::GradientToggled),
+        ]
+        .align_y(iced::Alignment::Center).spacing(12)
+        .into()
+    );
+    colors_col.push(
+        text("Renders background (Background → Secondary background) and accent (Accent → Secondary Accent) as gradients instead of flat colors, in waybar/wofi and here.")
+            .size(11)
+            .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+            .into()
+    );
 
     let colors_card = container(
         column(colors_col).spacing(12).padding(20),
@@ -360,7 +375,7 @@ pub fn view<'a>(
                 .style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
             app_picker("Terminal emulator", available_terminals, &config.terminal, Message::TerminalChanged),
             app_picker("Browser", available_browsers, &config.default_browser, Message::BrowserChanged),
-            app_picker("AI CLI (used by omegagiven-search)", available_ai_clis, &config.default_ai_cli, Message::AiCliChanged),
+            app_picker("AI CLI (used by og-search)", available_ai_clis, &config.default_ai_cli, Message::AiCliChanged),
             text(format!(
                 "Terminal color scheme is regenerated from this theme on Apply & Save, for: {}.",
                 crate::terminal_theme::SUPPORTED_TERMINALS.join(", "),
@@ -412,6 +427,21 @@ pub fn view<'a>(
             row![label("Corner rounding (pixels)"), iced::widget::horizontal_space(),
                 spin(config.corner_radius as i32, Message::CornerRadiusMinus, Message::CornerRadiusPlus)]
                 .align_y(iced::Alignment::Center).spacing(12),
+            {
+                use iced::widget::slider;
+                row![
+                    label("Unfocused window opacity"),
+                    slider(0.3f32..=1.0f32, config.unfocused_opacity, Message::UnfocusedOpacityChanged)
+                        .step(0.05)
+                        .width(220),
+                    container(
+                        text(format!("{:.0}%", config.unfocused_opacity * 100.0))
+                            .style(move |_| iced::widget::text::Style { color: Some(colors.text) })
+                    ).width(50),
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(12)
+            },
         ]
         .spacing(16).padding(20),
     )
@@ -557,6 +587,7 @@ pub fn view<'a>(
         use iced::widget::slider;
         row![
             label("Pointer sensitivity"),
+            iced::widget::horizontal_space(),
             slider(-1.0f32..=1.0f32, config.mouse_sensitivity, Message::MouseSensitivityChanged)
                 .step(0.05)
                 .width(220),
