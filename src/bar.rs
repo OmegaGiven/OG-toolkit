@@ -8,8 +8,13 @@ use og_theme::AppColors;
 
 use crate::message::Message;
 use crate::module::{Module, Orientation};
+use crate::modules::bluetooth::Bluetooth;
 use crate::modules::clock::Clock;
+use crate::modules::cpu::Cpu;
 use crate::modules::launcher::Launcher;
+use crate::modules::memory::Memory;
+use crate::modules::network::Network;
+use crate::modules::pulseaudio::Pulseaudio;
 use crate::modules::workspaces::Workspaces;
 use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
@@ -27,8 +32,13 @@ fn build_modules(list: &[ModuleConfig]) -> Vec<Box<dyn Module>> {
                 }
                 ModuleKind::Power => Some(Box::new(PowerButton)),
                 ModuleKind::Settings => Some(Box::new(SettingsButton)),
-                // Cpu/Memory/Tray/Bluetooth/Network/Pulseaudio: later build steps.
-                _ => None,
+                ModuleKind::Cpu => Some(Box::new(Cpu::new())),
+                ModuleKind::Memory => Some(Box::new(Memory::new())),
+                ModuleKind::Network => Some(Box::new(Network::new())),
+                ModuleKind::Bluetooth => Some(Box::new(Bluetooth::new())),
+                ModuleKind::Pulseaudio => Some(Box::new(Pulseaudio::new())),
+                // Tray: step 8 spike (real unknown, per PLAN.md section 9/13).
+                ModuleKind::Tray => None,
             }
         })
         .collect()

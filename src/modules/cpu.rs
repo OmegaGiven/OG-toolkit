@@ -1,0 +1,89 @@
+use iced::widget::{button, container, text};
+use iced::{Background, Border, Color, Element, Length, Subscription};
+
+use crate::message::Message;
+use crate::module::{Module, Orientation};
+use og_theme::AppColors;
+
+const WARNING_PCT: f32 = 70.0;
+const CRITICAL_PCT: f32 = 90.0;
+const WARNING_COLOR: Color = Color::from_rgb(0.85, 0.62, 0.2);
+const CRITICAL_COLOR: Color = Color::from_rgb(0.85, 0.27, 0.27);
+
+fn read_cpu_totals() -> Option<(u64, u64)> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    let line = stat.lines().next()?;
+    let fields: Vec<u64> = line.split_whitespace().skip(1).filter_map(|f| f.parse().ok()).collect();
+    if fields.len() < 4 {
+        return None;
+    }
+    let idle = fields[3] + fields.get(4).copied().unwrap_or(0);
+    let total: u64 = fields.iter().sum();
+    Some((idle, total))
+}
+
+pub struct Cpu {
+    prev: Option<(u64, u64)>,
+    usage_pct: f32,
+}
+
+impl Cpu {
+    pub fn new() -> Self {
+        Self { prev: read_cpu_totals(), usage_pct: 0.0 }
+    }
+
+    fn refresh(&mut self) {
+        let Some((idle, total)) = read_cpu_totals() else { return };
+        if let Some((prev_idle, prev_total)) = self.prev {
+            let idle_delta = idle.saturating_sub(prev_idle) as f32;
+            let total_delta = total.saturating_sub(prev_total) as f32;
+            if total_delta > 0.0 {
+                self.usage_pct = (1.0 - idle_delta / total_delta) * 100.0;
+            }
+        }
+        self.prev = Some((idle, total));
+    }
+}
+
+impl Module for Cpu {
+    fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
+        let fg = if self.usage_pct >= CRITICAL_PCT {
+            CRITICAL_COLOR
+        } else if self.usage_pct >= WARNING_PCT {
+            WARNING_COLOR
+        } else {
+            colors.text
+        };
+        let label = format!("CPU\n{:.0}%", self.usage_pct);
+        button(
+            container(text(label).size(12).align_x(iced::alignment::Horizontal::Center).style(move |_| text::Style { color: Some(fg) }))
+                .width(size as u16)
+                .height(size as u16)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        )
+        .padding(0)
+        .style(move |_, status| button::Style {
+            background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                colors.header_btn_bg
+            } else {
+                Color::TRANSPARENT
+            })),
+            border: Border { radius: colors.radius.into(), ..Default::default() },
+            text_color: fg,
+            ..Default::default()
+        })
+        .on_press(Message::Launch("alacritty -e htop".to_string()))
+        .into()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::Tick)
+    }
+
+    fn update(&mut self, message: &Message) {
+        if let Message::Tick = message {
+            self.refresh();
+        }
+    }
+}
