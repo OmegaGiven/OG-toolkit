@@ -305,6 +305,7 @@ pub enum ModuleKind {
     Pulseaudio,
     Launcher { icon: String, tooltip: String, command: String },
     Settings,
+    Power,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -388,6 +389,7 @@ impl Default for BarConfig {
                 },
                 ModuleConfig { kind: ModuleKind::Settings, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Tray, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Power, enabled: true, size_override: None },
             ],
         }
     }
