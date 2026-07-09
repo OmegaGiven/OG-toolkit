@@ -319,6 +319,33 @@ pub enum ModuleKind {
     Launcher { icon: String, tooltip: String, command: String },
     Settings,
     Power,
+    /// Flat list of every open window (not grouped by workspace like
+    /// Workspaces is) — click one to jump straight to it regardless of
+    /// which workspace it's on. Icon resolved through the same
+    /// `icon_rewrite` table Workspaces already uses.
+    Taskbar,
+}
+
+impl ModuleKind {
+    /// Kinds with no per-instance fields — these are the ones the "Add
+    /// module" picker can add generically with a single click. Launcher
+    /// (needs icon/command) and Clock (meaningfully different per
+    /// timezone) aren't in this list; they still get added via the
+    /// existing seeded defaults / hand-edited config.
+    pub fn addable() -> &'static [ModuleKind] {
+        &[
+            ModuleKind::Workspaces,
+            ModuleKind::Cpu,
+            ModuleKind::Memory,
+            ModuleKind::Tray,
+            ModuleKind::Bluetooth,
+            ModuleKind::Network,
+            ModuleKind::Pulseaudio,
+            ModuleKind::Settings,
+            ModuleKind::Power,
+            ModuleKind::Taskbar,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
