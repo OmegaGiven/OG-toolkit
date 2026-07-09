@@ -404,11 +404,56 @@ pub fn subscription(bar: &Bar) -> Subscription<Message> {
         }
     });
 
+    // Neither xdg_popup grab nor layer-shell has a "click anywhere else
+    // closes this" primitive layershellev implements (see the long
+    // comment above) — so instead of protocol-level dismissal, treat any
+    // sway window/workspace-focus change as "the user started doing
+    // something else" and close whatever popup is open. This is what
+    // actually fires when you click another app, alt-tab, or switch
+    // workspace while a popup is open — the two listeners above only
+    // ever caught clicks landing back on the bar's own surface.
+    // Gated on `bar.popup.is_some()` via `Subscription::none()` so no
+    // `swaymsg subscribe` process runs at all while nothing is open.
+    let popup_dismiss_on_activity = if bar.popup.is_some() {
+        Subscription::run_with_id("popup-dismiss", popup_dismiss_stream())
+    } else {
+        Subscription::none()
+    };
+
     Subscription::batch(
         bar.all_modules()
             .map(|m| m.subscription())
-            .chain([escape_closes_popup, click_reports_window]),
+            .chain([escape_closes_popup, click_reports_window, popup_dismiss_on_activity]),
     )
+}
+
+fn popup_dismiss_stream() -> impl iced::futures::Stream<Item = Message> {
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    iced::stream::channel(4, |mut sender| async move {
+        use iced::futures::SinkExt;
+
+        let mut command = Command::new("swaymsg");
+        command
+            .args(["-t", "subscribe", "-m", r#"["window","workspace"]"#])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true);
+        unsafe {
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+        let Ok(mut child) = command.spawn() else { return };
+        let Some(stdout) = child.stdout.take() else { return };
+        let mut lines = BufReader::new(stdout).lines();
+
+        while let Ok(Some(_line)) = lines.next_line().await {
+            let _ = sender.send(Message::ClosePopup).await;
+        }
+    })
 }
 
 pub fn style(bar: &Bar, _theme: &iced::Theme) -> iced_layershell::Appearance {
