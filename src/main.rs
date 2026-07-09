@@ -1,5 +1,7 @@
 mod app;
+mod audio;
 mod color_wheel;
+mod devices;
 mod config;
 mod pty;
 mod sway;

@@ -1,4 +1,6 @@
+pub mod audio;
 pub mod bar;
+pub mod devices;
 pub mod display;
 pub mod history;
 pub mod hotkeys;
@@ -24,6 +26,8 @@ pub enum Tab {
     SysMonitor,
     Notifications,
     Search,
+    Audio,
+    Devices,
 }
 
 impl Tab {
@@ -32,6 +36,8 @@ impl Tab {
             Tab::Power,
             Tab::Display,
             Tab::Network,
+            Tab::Audio,
+            Tab::Devices,
             Tab::Updates,
             Tab::Hotkeys,
             Tab::Theme,
@@ -56,6 +62,8 @@ impl Tab {
             Tab::SysMonitor => "System Monitor",
             Tab::Notifications => "Notifications",
             Tab::Search => "Search",
+            Tab::Audio => "Audio",
+            Tab::Devices => "Devices",
         }
     }
 }

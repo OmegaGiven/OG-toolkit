@@ -8,9 +8,12 @@ use iced::{
     Background, Border, Color, Element, Event, Length, Subscription, Task,
 };
 
+use crate::audio::{self, AudioSnapshot, AudioTarget};
 use crate::config::Config;
+use crate::devices;
 use crate::sway::{self, MonitorInfo};
 use crate::tabs::{self, Tab};
+use crate::tabs::audio::AudioSubTab;
 use crate::tabs::bar::BarSection;
 use crate::tabs::theme::hex_to_color;
 use crate::tabs::sysmon;
@@ -105,6 +108,17 @@ pub enum Message {
     UpdatesApplyFlatpak(Option<String>),
     UpdatesSearchChanged(String),
     UpdatesSectionToggled(UpdateSection),
+
+    // Audio tab
+    AudioSubTabSelected(AudioSubTab),
+    AudioSnapshotLoaded(AudioSnapshot),
+    AudioVolumeChanged(AudioTarget, u32),
+    AudioMuteToggled(AudioTarget, bool),
+    AudioSetDefault(AudioTarget),
+    AudioProfileSelected(String, String),
+
+    // Devices tab
+    DevicesLoaded(Vec<crate::devices::UsbDevice>, Vec<crate::devices::InputDevice>, Vec<crate::devices::PciDevice>),
 
     // Theme — login screen
     SyncGreeterBackground,
@@ -299,6 +313,15 @@ pub struct App {
     // Header search
     pub search_open: bool,
     pub search_query: String,
+
+    // Audio tab
+    pub audio_subtab: AudioSubTab,
+    pub audio_snapshot: AudioSnapshot,
+
+    // Devices tab
+    pub usb_devices: Vec<crate::devices::UsbDevice>,
+    pub input_devices: Vec<crate::devices::InputDevice>,
+    pub pci_devices: Vec<crate::devices::PciDevice>,
 }
 
 #[derive(Debug, Clone)]
@@ -358,6 +381,8 @@ impl App {
                 "history" => Some(Tab::History),
                 "sysmonitor" => Some(Tab::SysMonitor),
                 "search" => Some(Tab::Search),
+                "audio" => Some(Tab::Audio),
+                "devices" => Some(Tab::Devices),
                 _ => None,
             })
             .unwrap_or(Tab::Power);
@@ -421,6 +446,13 @@ impl App {
                 updates_collapsed: Vec::new(),
                 search_open: false,
                 search_query: String::new(),
+
+                audio_subtab: AudioSubTab::Output,
+                audio_snapshot: AudioSnapshot::default(),
+
+                usb_devices: Vec::new(),
+                input_devices: Vec::new(),
+                pci_devices: Vec::new(),
             },
             if initial_tab_is_network { load_network_data() } else { Task::none() },
         )
@@ -470,6 +502,22 @@ impl App {
                 }
                 if self.current_tab == Tab::Updates {
                     return load_update_status();
+                }
+                if self.current_tab == Tab::Audio {
+                    return Task::perform(
+                        async { tokio::task::spawn_blocking(audio::snapshot).await.unwrap_or_default() },
+                        Message::AudioSnapshotLoaded,
+                    );
+                }
+                if self.current_tab == Tab::Devices {
+                    return Task::perform(
+                        async {
+                            tokio::task::spawn_blocking(|| (devices::list_usb(), devices::list_input(), devices::list_pci()))
+                                .await
+                                .unwrap_or_else(|_| (Vec::new(), Vec::new(), Vec::new()))
+                        },
+                        |(usb, input, pci)| Message::DevicesLoaded(usb, input, pci),
+                    );
                 }
                 // Entering SysMonitor — ask the runtime for the real window
                 // size first; self.window_size can be stale if no resize
@@ -713,6 +761,37 @@ impl App {
                 } else {
                     self.updates_collapsed.push(section);
                 }
+            }
+
+            // Audio tab
+            Message::AudioSubTabSelected(t) => { self.audio_subtab = t; }
+            Message::AudioSnapshotLoaded(s) => { self.audio_snapshot = s; }
+            Message::AudioVolumeChanged(target, pct) => {
+                audio::set_volume(&target, pct);
+                self.audio_snapshot = audio::snapshot();
+            }
+            Message::AudioMuteToggled(target, mute) => {
+                audio::set_mute(&target, mute);
+                self.audio_snapshot = audio::snapshot();
+            }
+            Message::AudioSetDefault(target) => {
+                match &target {
+                    AudioTarget::Sink(name) => audio::set_default_sink(name),
+                    AudioTarget::Source(name) => audio::set_default_source(name),
+                    AudioTarget::SinkInput(_) | AudioTarget::SourceOutput(_) => {}
+                }
+                self.audio_snapshot = audio::snapshot();
+            }
+            Message::AudioProfileSelected(card_name, profile_id) => {
+                audio::set_card_profile(&card_name, &profile_id);
+                self.audio_snapshot = audio::snapshot();
+            }
+
+            // Devices tab
+            Message::DevicesLoaded(usb, input, pci) => {
+                self.usb_devices = usb;
+                self.input_devices = input;
+                self.pci_devices = pci;
             }
 
             Message::SyncGreeterBackground => {
@@ -1329,6 +1408,15 @@ impl App {
         let monitor_timer = iced::time::every(std::time::Duration::from_secs(5))
             .map(|_| Message::MonitorsRefreshed(sway::get_monitor_info()));
 
+        let audio_poll = if self.current_tab == Tab::Audio {
+            Some(
+                iced::time::every(std::time::Duration::from_secs(2))
+                    .map(|_| Message::AudioSnapshotLoaded(audio::snapshot())),
+            )
+        } else {
+            None
+        };
+
         let pty_poll = if self.current_tab == Tab::SysMonitor && self.pty_session.is_some() {
             Some(
                 iced::time::every(std::time::Duration::from_millis(50))
@@ -1387,6 +1475,7 @@ impl App {
         if let Some(p) = pty_poll { subs.push(p); }
         if let Some(k) = kb { subs.push(k); }
         if let Some(t) = term_kb { subs.push(t); }
+        if let Some(a) = audio_poll { subs.push(a); }
         Subscription::batch(subs)
     }
 
@@ -1864,6 +1953,15 @@ impl App {
             Tab::Search => tabs::search::view(&self.config, colors),
             Tab::History => tabs::history::view(&self.history, colors),
             Tab::SysMonitor => tabs::sysmon::view(colors, self.term_canvas.as_ref()),
+            Tab::Audio => tabs::audio::view(colors, self.audio_subtab, &self.audio_snapshot),
+            Tab::Devices => tabs::devices::view(
+                colors,
+                &self.usb_devices,
+                &self.input_devices,
+                &self.bluetooth_devices,
+                &self.monitors,
+                &self.pci_devices,
+            ),
         }
     }
 
