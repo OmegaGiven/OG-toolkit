@@ -1270,18 +1270,19 @@ impl App {
         // SysMonitor renders a fill-height terminal canvas; inside a scrollable
         // its height would resolve to zero, so it gets the space directly.
         let content: Element<Message> = if searching {
-            scrollable(self.search_results_view(colors)).height(Length::Fill).into()
+            scrollable(self.search_results_view(colors)).width(Length::Fill).height(Length::Fill).into()
         } else if self.current_tab == Tab::SysMonitor {
-            container(self.tab_content(colors)).height(Length::Fill).into()
+            container(self.tab_content(colors)).width(Length::Fill).height(Length::Fill).into()
         } else {
-            scrollable(self.tab_content(colors)).height(Length::Fill).into()
+            scrollable(self.tab_content(colors)).width(Length::Fill).height(Length::Fill).into()
         };
+
+        let body: Element<Message> = row![self.sidebar(colors), content].height(Length::Fill).into();
 
         let main_content: Element<Message> = column![
             self.header(colors),
             accent_line(accent),
-            self.tab_bar(colors),
-            content,
+            body,
         ]
         .into();
 
@@ -1488,9 +1489,17 @@ impl App {
 
     // ── Tab bar ───────────────────────────────────────────────────────────
 
-    fn tab_bar<'a>(&'a self, colors: AppColors) -> Element<'a, Message> {
+    /// Left sidebar of tab buttons, in its own scrollable — a fixed-width
+    /// column rather than the old horizontal row so adding more tabs never
+    /// requires shrinking labels or wrapping; it just scrolls (the actual
+    /// point of this layout switch — see PLAN.md-style reasoning: more
+    /// settings tabs are coming, a top row runs out of horizontal room
+    /// first).
+    fn sidebar<'a>(&'a self, colors: AppColors) -> Element<'a, Message> {
         let c = colors;
-        // Each tab is a column of [button, indicator] so indicator width matches button width exactly
+        // Each tab is a row of [indicator, button] so the indicator is a
+        // left-edge accent bar instead of the old bottom-underline one —
+        // same idea, rotated to match a vertical list.
         let tab_items: Vec<Element<Message>> = Tab::all()
             .iter()
             .map(|tab| {
@@ -1502,33 +1511,35 @@ impl App {
                     })
                 )
                 .style(move |_, _| iced::widget::button::Style {
-                    background: Some(Background::Color(c.bar_bg)),
+                    background: Some(Background::Color(if active { c.surface } else { c.bar_bg })),
                     text_color: if active { c.text } else { c.dim_text },
                     border: Border { color: Color::TRANSPARENT, width: 0.0, radius: 0.0.into() },
                     ..Default::default()
                 })
                 .on_press(Message::TabSelected(t))
-                .padding([10, 16]);
+                .padding([10, 16])
+                .width(Length::Fill);
 
-                let indicator = container(iced::widget::Space::new(Length::Fill, 2u16))
+                let indicator = container(iced::widget::Space::new(2u16, Length::Fill))
                     .style(move |_| container::Style {
                         background: Some(Background::Color(
                             if active { c.accent } else { Color::TRANSPARENT }
                         )),
                         ..Default::default()
                     })
-                    .width(Length::Fill);
+                    .height(Length::Fill);
 
-                column![btn, indicator].into()
+                row![indicator, btn].align_y(iced::Alignment::Center).into()
             })
             .collect();
 
-        container(row(tab_items).spacing(0))
+        container(scrollable(column(tab_items).spacing(0)).height(Length::Fill))
             .style(move |_| container::Style {
                 background: Some(Background::Color(c.bar_bg)),
                 ..Default::default()
             })
-            .width(Length::Fill)
+            .width(Length::Fixed(180.0))
+            .height(Length::Fill)
             .into()
     }
 
