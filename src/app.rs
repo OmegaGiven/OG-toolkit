@@ -64,6 +64,8 @@ pub enum Message {
     // Power
     MonitorSleepToggled(bool),
     GamescopeSteamToggled(bool),
+    SearchFilesToggled(bool),
+    SearchSettingsToggled(bool),
     MonitorSleepMinus,
     MonitorSleepPlus,
     SystemSleepToggled(bool),
@@ -347,6 +349,15 @@ impl App {
                 "theme" => Some(Tab::Theme),
                 "bar" => Some(Tab::Bar),
                 "notifications" => Some(Tab::Notifications),
+                // Rest added for og-search's new "search settings" results
+                // (searches Tab::label() and needs a --tab value for every
+                // tab to actually deep-link to it, not just the six that
+                // already had one).
+                "updates" => Some(Tab::Updates),
+                "hotkeys" => Some(Tab::Hotkeys),
+                "history" => Some(Tab::History),
+                "sysmonitor" => Some(Tab::SysMonitor),
+                "search" => Some(Tab::Search),
                 _ => None,
             })
             .unwrap_or(Tab::Power);
@@ -523,6 +534,14 @@ impl App {
                 self.config.gamescope_steam = v;
                 let _ = self.config.save();
                 sway::apply_gamescope_steam(v);
+            }
+            Message::SearchFilesToggled(v) => {
+                self.config.search_files_enabled = v;
+                let _ = self.config.save();
+            }
+            Message::SearchSettingsToggled(v) => {
+                self.config.search_settings_enabled = v;
+                let _ = self.config.save();
             }
             Message::MonitorSleepMinus => {
                 self.config.monitor_sleep.minutes = self.config.monitor_sleep.minutes.saturating_sub(1).max(1);
@@ -1842,6 +1861,7 @@ impl App {
                 self.module_dragging.as_ref(),
             ),
             Tab::Bar => tabs::bar::view(&self.bar_config, colors),
+            Tab::Search => tabs::search::view(&self.config, colors),
             Tab::History => tabs::history::view(&self.history, colors),
             Tab::SysMonitor => tabs::sysmon::view(colors, self.term_canvas.as_ref()),
         }

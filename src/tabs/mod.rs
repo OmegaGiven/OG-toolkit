@@ -5,6 +5,7 @@ pub mod hotkeys;
 pub mod network;
 pub mod notifications;
 pub mod power;
+pub mod search;
 pub mod sysmon;
 pub mod taskbar_arrange;
 pub mod theme;
@@ -22,6 +23,7 @@ pub enum Tab {
     History,
     SysMonitor,
     Notifications,
+    Search,
 }
 
 impl Tab {
@@ -34,6 +36,7 @@ impl Tab {
             Tab::Hotkeys,
             Tab::Theme,
             Tab::Bar,
+            Tab::Search,
             Tab::Notifications,
             Tab::History,
             Tab::SysMonitor,
@@ -52,6 +55,7 @@ impl Tab {
             Tab::History => "History",
             Tab::SysMonitor => "System Monitor",
             Tab::Notifications => "Notifications",
+            Tab::Search => "Search",
         }
     }
 }
