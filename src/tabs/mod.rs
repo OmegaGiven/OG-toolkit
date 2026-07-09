@@ -7,6 +7,7 @@ pub mod hotkeys;
 pub mod network;
 pub mod notifications;
 pub mod power;
+pub mod printing;
 pub mod search;
 pub mod sysmon;
 pub mod taskbar_arrange;
@@ -28,6 +29,7 @@ pub enum Tab {
     Search,
     Audio,
     Devices,
+    Printing,
 }
 
 impl Tab {
@@ -38,6 +40,7 @@ impl Tab {
             Tab::Network,
             Tab::Audio,
             Tab::Devices,
+            Tab::Printing,
             Tab::Updates,
             Tab::Hotkeys,
             Tab::Theme,
@@ -64,6 +67,7 @@ impl Tab {
             Tab::Search => "Search",
             Tab::Audio => "Audio",
             Tab::Devices => "Devices",
+            Tab::Printing => "Printing",
         }
     }
 }

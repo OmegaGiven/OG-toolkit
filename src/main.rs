@@ -3,6 +3,7 @@ mod audio;
 mod color_wheel;
 mod devices;
 mod config;
+mod printing;
 mod pty;
 mod sway;
 mod tabs;

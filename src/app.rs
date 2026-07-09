@@ -11,6 +11,7 @@ use iced::{
 use crate::audio::{self, AudioSnapshot, AudioTarget};
 use crate::config::Config;
 use crate::devices;
+use crate::printing;
 use crate::sway::{self, MonitorInfo};
 use crate::vpn;
 use crate::tabs::{self, Tab};
@@ -113,6 +114,14 @@ pub enum Message {
     VpnSetWhole(String),
     VpnSetPartial(String),
     VpnAppRouteToggled(String, String, bool),
+
+    // Printing tab
+    PrintingDataLoaded(bool, Vec<crate::printing::Printer>, Vec<crate::printing::DetectedDevice>),
+    PrintingCupsToggled(bool),
+    PrintingSetDefault(String),
+    PrintingRemove(String),
+    PrintingTestPage(String),
+    PrintingAddDriverless(String),
 
     // Updates tab
     UpdatesStatusLoaded(sway::UpdateStatus),
@@ -326,6 +335,11 @@ pub struct App {
     pub vpn_add_name: String,
     pub vpn_add_conf_text: String,
 
+    // Printing tab
+    pub cups_running: bool,
+    pub printers: Vec<crate::printing::Printer>,
+    pub detected_printers: Vec<crate::printing::DetectedDevice>,
+
     // Updates tab
     pub update_status: sway::UpdateStatus,
     pub updates_checking: bool,
@@ -405,6 +419,7 @@ impl App {
                 "search" => Some(Tab::Search),
                 "audio" => Some(Tab::Audio),
                 "devices" => Some(Tab::Devices),
+                "printing" => Some(Tab::Printing),
                 _ => None,
             })
             .unwrap_or(Tab::Power);
@@ -476,6 +491,10 @@ impl App {
                 vpn_add_name: String::new(),
                 vpn_add_conf_text: String::new(),
 
+                cups_running: false,
+                printers: Vec::new(),
+                detected_printers: Vec::new(),
+
                 audio_subtab: AudioSubTab::Output,
                 audio_snapshot: AudioSnapshot::default(),
 
@@ -536,6 +555,21 @@ impl App {
                     return Task::perform(
                         async { tokio::task::spawn_blocking(audio::snapshot).await.unwrap_or_default() },
                         Message::AudioSnapshotLoaded,
+                    );
+                }
+                if self.current_tab == Tab::Printing {
+                    return Task::perform(
+                        async {
+                            tokio::task::spawn_blocking(|| {
+                                let running = printing::cups_running();
+                                let printers = printing::list_printers();
+                                let detected = printing::list_detected_devices(&printers);
+                                (running, printers, detected)
+                            })
+                            .await
+                            .unwrap_or_else(|_| (false, Vec::new(), Vec::new()))
+                        },
+                        |(running, printers, detected)| Message::PrintingDataLoaded(running, printers, detected),
                     );
                 }
                 if self.current_tab == Tab::Devices {
@@ -832,6 +866,34 @@ impl App {
             Message::VpnAppRouteToggled(id, name, routed) => {
                 vpn::set_app_routed(&id, &name, routed);
                 self.split_apps = vpn::list_split_apps();
+            }
+
+            // Printing tab
+            Message::PrintingDataLoaded(running, printers, detected) => {
+                self.cups_running = running;
+                self.printers = printers;
+                self.detected_printers = detected;
+            }
+            Message::PrintingCupsToggled(enabled) => {
+                printing::set_cups_enabled(&self.config.terminal, enabled);
+            }
+            Message::PrintingSetDefault(name) => {
+                printing::set_default(&name);
+                self.printers = printing::list_printers();
+            }
+            Message::PrintingRemove(name) => {
+                printing::remove_printer(&name);
+                self.printers = printing::list_printers();
+                self.detected_printers = printing::list_detected_devices(&self.printers);
+            }
+            Message::PrintingTestPage(name) => {
+                printing::print_test_page(&name);
+            }
+            Message::PrintingAddDriverless(uri) => {
+                let name = format!("printer_{}", self.printers.len() + 1);
+                printing::add_driverless(&name, &uri);
+                self.printers = printing::list_printers();
+                self.detected_printers = printing::list_detected_devices(&self.printers);
             }
 
             // Updates tab
@@ -2052,6 +2114,7 @@ impl App {
             Tab::History => tabs::history::view(&self.history, colors),
             Tab::SysMonitor => tabs::sysmon::view(colors, self.term_canvas.as_ref()),
             Tab::Audio => tabs::audio::view(colors, self.audio_subtab, &self.audio_snapshot),
+            Tab::Printing => tabs::printing::view(colors, self.cups_running, &self.printers, &self.detected_printers),
             Tab::Devices => tabs::devices::view(
                 colors,
                 &self.usb_devices,
