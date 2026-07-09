@@ -57,7 +57,6 @@ fn kind_label(kind: &ModuleKind) -> String {
         ModuleKind::Launcher { tooltip, .. } => tooltip.clone(),
         ModuleKind::Settings => "Settings".to_string(),
         ModuleKind::Power => "Power".to_string(),
-        ModuleKind::Taskbar => "Taskbar".to_string(),
     }
 }
 
