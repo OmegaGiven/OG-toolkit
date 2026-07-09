@@ -340,6 +340,48 @@ pub struct BarConfig {
     pub modules_center: Vec<ModuleConfig>,
     #[serde(default)]
     pub modules_end: Vec<ModuleConfig>,
+    /// Per-app-id/class icon for the workspaces module — matched
+    /// case-insensitively as a substring against a window's app_id or
+    /// class, first match wins. User-editable list, not hardcoded
+    /// (PLAN.md's own parity checklist calls this out specifically) —
+    /// seeded with a sane default here, same as every other field.
+    #[serde(default = "default_icon_rewrite")]
+    pub icon_rewrite: Vec<IconRewriteRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IconRewriteRule {
+    pub match_value: String,
+    pub icon: String,
+}
+
+fn rule(match_value: &str, icon: &str) -> IconRewriteRule {
+    IconRewriteRule { match_value: match_value.to_string(), icon: icon.to_string() }
+}
+
+fn default_icon_rewrite() -> Vec<IconRewriteRule> {
+    vec![
+        rule("og-settings", ""),
+        rule("alacritty", "./"),
+        rule("brave-browser", "󰖟"),
+        rule("firefox", ""),
+        rule("chromium", ""),
+        rule("code-oss", "󰨞"),
+        rule("vesktop", "󰙯"),
+        rule("discord", "󰙯"),
+        rule("godot", ""),
+        rule("factorio", "󰊴"),
+        rule("steam_app", "󰊴"),
+        rule("steamapp", "󰊴"),
+        rule("steam", ""),
+        rule("spotify", ""),
+        rule("thunar", ""),
+        rule("nautilus", ""),
+        rule("vlc", "󰕼"),
+        rule("gimp", ""),
+        rule("obs", ""),
+        rule("minecraft", "󰍎"),
+    ]
 }
 
 fn default_bar_thickness() -> u32 {
@@ -398,6 +440,7 @@ impl Default for BarConfig {
                 ModuleConfig { kind: ModuleKind::Pulseaudio, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Power, enabled: true, size_override: None },
             ],
+            icon_rewrite: default_icon_rewrite(),
         }
     }
 }
