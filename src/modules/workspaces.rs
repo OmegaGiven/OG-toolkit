@@ -200,10 +200,23 @@ impl Module for Workspaces {
                 let mut parts: Vec<Element<Message>> = vec![number_btn.into()];
                 parts.extend(window_btns);
 
-                match orientation {
+                let group: Element<Message> = match orientation {
                     Orientation::Horizontal => row(parts).spacing(1).into(),
                     Orientation::Vertical => column(parts).spacing(1).into(),
-                }
+                };
+
+                // Outline around the number + its app icons together, so
+                // it's visually obvious which icons belong to which
+                // desktop — every workspace gets one (not just the
+                // focused one), so they read as separate groups at a
+                // glance rather than one continuous strip of icons.
+                container(group)
+                    .padding(2)
+                    .style(move |_| container::Style {
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                        ..Default::default()
+                    })
+                    .into()
             })
             .collect();
 
