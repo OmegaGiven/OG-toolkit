@@ -182,6 +182,36 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 }
             }
         }
+        Message::OpenWindowMenu(con_id, current_ws) => {
+            let (con_id, current_ws) = (*con_id, *current_ws);
+            let id = iced::window::Id::unique();
+            let other_workspaces = fetch_other_workspace_nums(current_ws);
+            bar.popup = Some(PopupState { id, kind: PopupKind::WindowMenu { con_id, other_workspaces } });
+            let direction = match bar.bar_cfg.position {
+                Edge::Bottom => MenuDirection::Up,
+                Edge::Top | Edge::Left | Edge::Right => MenuDirection::Down,
+            };
+            return Task::done(Message::NewMenu {
+                settings: IcedNewMenuSettings { size: (160, 260), direction },
+                id,
+            });
+        }
+        Message::WindowMenuClose(con_id) => {
+            let _ = std::process::Command::new("swaymsg")
+                .arg(format!("[con_id={con_id}] kill"))
+                .output();
+            if let Some(popup) = bar.popup.take() {
+                return Task::done(Message::RemoveWindow(popup.id));
+            }
+        }
+        Message::WindowMenuMoveToWorkspace(con_id, ws_num) => {
+            let _ = std::process::Command::new("swaymsg")
+                .arg(format!("[con_id={con_id}] move to workspace number {ws_num}"))
+                .output();
+            if let Some(popup) = bar.popup.take() {
+                return Task::done(Message::RemoveWindow(popup.id));
+            }
+        }
         Message::OpenSettingsPopup => {
             let id = iced::window::Id::unique();
             bar.popup = Some(PopupState { id, kind: PopupKind::Settings });
@@ -275,12 +305,32 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
     Task::none()
 }
 
+/// Synchronous — same convention as other quick shell-outs in this
+/// codebase; the window menu is transient so a live-updating list isn't
+/// worth the complexity.
+fn fetch_other_workspace_nums(current_ws: i32) -> Vec<i32> {
+    let out = std::process::Command::new("swaymsg").args(["-t", "get_workspaces"]).output();
+    let Ok(out) = out else { return Vec::new() };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return Vec::new() };
+    let Some(arr) = v.as_array() else { return Vec::new() };
+    let mut nums: Vec<i32> = arr
+        .iter()
+        .filter_map(|w| w.get("num").and_then(|n| n.as_i64()).map(|n| n as i32))
+        .filter(|n| *n != current_ws)
+        .collect();
+    nums.sort();
+    nums
+}
+
 pub fn view(bar: &Bar, id: iced::window::Id) -> Element<'_, Message> {
     if let Some(popup) = &bar.popup {
         if popup.id == id {
-            return match popup.kind {
+            return match &popup.kind {
                 PopupKind::Power => crate::power::popup_view(bar.colors),
                 PopupKind::Settings => crate::settings::popup_view(bar.colors, &bar.bar_cfg),
+                PopupKind::WindowMenu { con_id, other_workspaces } => {
+                    crate::window_menu::popup_view(bar.colors, *con_id, other_workspaces)
+                }
             };
         }
     }

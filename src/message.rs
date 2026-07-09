@@ -32,4 +32,7 @@ pub enum Message {
     AddModule(Section, ModuleKind),
     SetClockTimezone(Section, usize, String),
     ApplyRelayout,
+    OpenWindowMenu(i64, i32),
+    WindowMenuClose(i64),
+    WindowMenuMoveToWorkspace(i64, i32),
 }

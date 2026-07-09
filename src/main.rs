@@ -6,6 +6,7 @@ mod modules;
 mod popup;
 mod power;
 mod settings;
+mod window_menu;
 
 use iced_layershell::build_pattern::daemon;
 use iced_layershell::reexport::Anchor;

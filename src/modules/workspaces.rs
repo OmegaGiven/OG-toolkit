@@ -3,7 +3,7 @@
 //! integration already goes through `swaymsg`, so this keeps og-bar
 //! consistent instead of adding a bespoke IPC client for one module.
 
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, mouse_area, row, text};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 use serde::Deserialize;
 use std::process::Stdio;
@@ -172,34 +172,35 @@ impl Module for Workspaces {
                 // so font_for() picks per-icon rather than forcing one.
                 let window_btns = ws.windows.iter().map(|w| {
                     let con_id = w.con_id;
+                    let ws_num = ws.num;
                     let win_focused = w.focused;
                     let win_fg = if win_focused { colors.bar_bg } else { colors.text };
-                    button(
+                    // mouse_area, not button — button has no on_right_press,
+                    // and this needs both (left: focus, right: close/move
+                    // menu), same convention as the settings/pulseaudio
+                    // buttons elsewhere in this bar. Trade-off: no hover
+                    // highlight, matching those.
+                    mouse_area(
                         container(
-                            text(w.icon.clone())
-                                .size(14)
-                                .font(icon_font::font_for(&w.icon))
-                                .style(move |_| text::Style { color: Some(win_fg) }),
+                            container(
+                                text(w.icon.clone())
+                                    .size(14)
+                                    .font(icon_font::font_for(&w.icon))
+                                    .style(move |_| text::Style { color: Some(win_fg) }),
+                            )
+                            .width(size as u16)
+                            .height(size as u16)
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill),
                         )
-                        .width(size as u16)
-                        .height(size as u16)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill),
+                        .style(move |_| container::Style {
+                            background: Some(Background::Color(if win_focused { colors.accent } else { Color::TRANSPARENT })),
+                            border: Border { radius: colors.radius.into(), ..Default::default() },
+                            ..Default::default()
+                        }),
                     )
-                    .padding(0)
-                    .style(move |_, status| button::Style {
-                        background: Some(Background::Color(if win_focused {
-                            colors.accent
-                        } else if matches!(status, button::Status::Hovered) {
-                            colors.header_btn_bg
-                        } else {
-                            Color::TRANSPARENT
-                        })),
-                        border: Border { radius: colors.radius.into(), ..Default::default() },
-                        text_color: win_fg,
-                        ..Default::default()
-                    })
                     .on_press(Message::FocusWindow(con_id))
+                    .on_right_press(Message::OpenWindowMenu(con_id, ws_num))
                     .into()
                 });
 
