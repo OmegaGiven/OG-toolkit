@@ -135,6 +135,15 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 return Task::done(Message::RemoveWindow(popup.id));
             }
         }
+        Message::ClickOnWindow(window) => {
+            if let Some(popup) = &bar.popup {
+                if popup.id != *window {
+                    let id = popup.id;
+                    bar.popup = None;
+                    return Task::done(Message::RemoveWindow(id));
+                }
+            }
+        }
         Message::OpenSettingsPopup => {
             let id = iced::window::Id::unique();
             bar.popup = Some(PopupState { id, kind: PopupKind::Settings });
@@ -308,10 +317,39 @@ pub fn subscription(bar: &Bar) -> Subscription<Message> {
         }
     });
 
+    // A real "click anywhere on the desktop closes the popup" needs the
+    // compositor to grab pointer input for the popup surface (xdg_popup's
+    // own `.grab()`) and deliver a `popup_done` event on outside click —
+    // iced_layershell 0.13.7 never calls `.grab()` and its xdg_popup
+    // dispatch doesn't even handle `PopupDone` if the compositor sent one
+    // anyway. That's an upstream gap, not fixable from here. What this
+    // *can* do: notice a click landing back on the bar's own surface
+    // (a different window from the popup) while a popup is open, and
+    // treat that as "dismiss" — covers the common case of clicking the
+    // bar again, though not clicking some unrelated app window elsewhere.
+    // `listen_with` only takes a non-capturing fn pointer, so this always
+    // reports the click; `update()` (which has `bar.popup`) decides
+    // whether it actually means "close".
+    // Status::Ignored means no widget (button, etc) claimed the click —
+    // critically, this excludes the click that just opened a popup via
+    // its own on_press, which iced reports as Captured. Without this
+    // check, clicking the gear/power icon would open a popup and this
+    // same listener would immediately close it again in the same frame.
+    let click_reports_window = iced::event::listen_with(|event, status, event_window| {
+        if status != iced::event::Status::Ignored {
+            return None;
+        }
+        if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) = event {
+            Some(Message::ClickOnWindow(event_window))
+        } else {
+            None
+        }
+    });
+
     Subscription::batch(
         bar.all_modules()
             .map(|m| m.subscription())
-            .chain(std::iter::once(escape_closes_popup)),
+            .chain([escape_closes_popup, click_reports_window]),
     )
 }
 

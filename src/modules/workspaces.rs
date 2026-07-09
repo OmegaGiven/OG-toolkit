@@ -12,6 +12,7 @@ use tokio::process::Command;
 
 use og_config::IconRewriteRule;
 
+use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
@@ -43,7 +44,10 @@ fn resolve_icon(app_id: Option<&str>, class: Option<&str>, rules: &[IconRewriteR
         .iter()
         .find(|r| haystack.contains(&r.match_value.to_lowercase()))
         .map(|r| r.icon.clone())
-        .unwrap_or_else(|| "?".to_string())
+        // U+F128 (nf-fa-question) rather than ASCII "?" — Symbols Nerd Font
+        // has zero ASCII coverage, so a plain "?" here would tofu right
+        // alongside the icons it's meant to sit next to.
+        .unwrap_or_else(|| "\u{f128}".to_string())
 }
 
 /// Walks sway's `get_tree` output collecting, per top-level workspace node,
@@ -130,13 +134,23 @@ impl Module for Workspaces {
             .map(|ws| {
                 let bg = if ws.focused { colors.accent } else { Color::TRANSPARENT };
                 let fg = if ws.focused { colors.bar_bg } else { colors.text };
-                let label = if ws.window_icons.is_empty() {
-                    ws.name.clone()
-                } else {
-                    ws.window_icons.join(" ")
-                };
+                // Number stays visible always (own widget, default font);
+                // icons are each their own Text widget too rather than one
+                // string joined with a literal space — Symbols Nerd Font
+                // has no space glyph, so a joined string would tofu on
+                // every separator between icons.
+                let mut parts: Vec<Element<Message>> =
+                    vec![text(ws.name.clone()).size(14).style(move |_| text::Style { color: Some(fg) }).into()];
+                parts.extend(ws.window_icons.iter().map(|icon| {
+                    text(icon.clone())
+                        .size(14)
+                        .font(icon_font::nerd_font())
+                        .style(move |_| text::Style { color: Some(fg) })
+                        .into()
+                }));
+                let content: Element<Message> = row(parts).spacing(3).into();
                 button(
-                    container(text(label).size(14).style(move |_| text::Style { color: Some(fg) }))
+                    container(content)
                         .width(size as u16)
                         .height(size as u16)
                         .center_x(Length::Fill)

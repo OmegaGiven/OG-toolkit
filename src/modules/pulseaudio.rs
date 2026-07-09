@@ -1,6 +1,7 @@
-use iced::widget::{button, container, text};
+use iced::widget::{button, column, container, text};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 
+use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
@@ -40,13 +41,19 @@ impl Pulseaudio {
 impl Module for Pulseaudio {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
-        let label = if self.muted {
-            "󰖁\nMUTE".to_string()
-        } else {
-            format!("󰕾\n{}%", self.volume_pct)
-        };
+        // Icon glyph and the "MUTE"/percentage text can't share one Text
+        // widget — Symbols Nerd Font has no ASCII/digit glyphs at all, so a
+        // joined string tofu's everything but the icon. Two widgets, two
+        // fonts, stacked.
+        let (icon, sub) = if self.muted { ("\u{f0581}", "MUTE".to_string()) } else { ("\u{f057e}", format!("{}%", self.volume_pct)) };
         button(
-            container(text(label).size(12).align_x(iced::alignment::Horizontal::Center).style(move |_| text::Style { color: Some(fg) }))
+            container(
+                column![
+                    text(icon).size(14).font(icon_font::nerd_font()).align_x(iced::alignment::Horizontal::Center).style(move |_| text::Style { color: Some(fg) }),
+                    text(sub).size(11).align_x(iced::alignment::Horizontal::Center).style(move |_| text::Style { color: Some(fg) }),
+                ]
+                .align_x(iced::Alignment::Center),
+            )
                 .width(size as u16)
                 .height(size as u16)
                 .center_x(Length::Fill)

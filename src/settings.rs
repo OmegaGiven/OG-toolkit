@@ -11,6 +11,7 @@ use iced::{Background, Border, Color, Element, Length};
 
 use og_config::{Edge, ModuleKind};
 
+use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
@@ -28,7 +29,7 @@ impl Module for SettingsButton {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
         button(
-            container(text("").size(16).style(move |_| text::Style { color: Some(fg) }))
+            container(text("\u{eaf8}").size(16).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }))
                 .width(size as u16)
                 .height(size as u16)
                 .center_x(Length::Fill)

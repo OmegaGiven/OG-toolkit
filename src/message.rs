@@ -15,6 +15,7 @@ pub enum Message {
     OpenPowerMenu,
     PowerAction(PowerAction),
     ClosePopup,
+    ClickOnWindow(iced::window::Id),
     OpenSettingsPopup,
     SetEdge(Edge),
     SetThickness(u32),

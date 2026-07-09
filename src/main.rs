@@ -1,4 +1,5 @@
 mod bar;
+mod icon_font;
 mod message;
 mod module;
 mod modules;
@@ -24,8 +25,13 @@ fn main() -> iced_layershell::Result {
         Edge::Right => (Some((thickness, 0)), Anchor::Right | Anchor::Top | Anchor::Bottom),
     };
 
-    daemon("og-bar", bar::update, bar::view, bar::remove_id)
-        .layer_settings(LayerShellSettings {
+    let app = daemon("og-bar", bar::update, bar::view, bar::remove_id);
+    let app = match icon_font::load_font_bytes() {
+        Some(bytes) => app.font(bytes),
+        None => app,
+    };
+
+    app.layer_settings(LayerShellSettings {
             size,
             anchor,
             exclusive_zone: thickness as i32,

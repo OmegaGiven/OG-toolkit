@@ -1,6 +1,7 @@
 use iced::widget::{button, container, text};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 
+use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
@@ -28,9 +29,9 @@ impl Bluetooth {
 impl Module for Bluetooth {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
-        let icon = if self.powered { "󰂯" } else { "󰂲" };
+        let icon = if self.powered { "\u{f00af}" } else { "\u{f00b2}" };
         button(
-            container(text(icon).size(16).style(move |_| text::Style { color: Some(fg) }))
+            container(text(icon).size(16).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }))
                 .width(size as u16)
                 .height(size as u16)
                 .center_x(Length::Fill)
