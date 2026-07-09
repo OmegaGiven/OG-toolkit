@@ -12,6 +12,7 @@ pub enum Message {
     FocusWorkspace(String),
     Tick,
     Launch(String),
+    PulseaudioToggleMute,
     OpenPowerMenu,
     PowerAction(PowerAction),
     ClosePopup,

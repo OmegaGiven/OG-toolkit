@@ -110,6 +110,15 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 .arg(format!("setsid {cmd} >/dev/null 2>&1 &"))
                 .spawn();
         }
+        Message::PulseaudioToggleMute => {
+            // Blocking (not spawn+detach like Launch) so the module's own
+            // update() below re-reads mute/volume state only after pactl
+            // has actually finished flipping it — otherwise the icon
+            // would still show the pre-toggle state for up to one Tick.
+            let _ = std::process::Command::new("pactl")
+                .args(["set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+                .output();
+        }
         Message::OpenPowerMenu => {
             let id = iced::window::Id::unique();
             bar.popup = Some(PopupState { id, kind: PopupKind::Power });
