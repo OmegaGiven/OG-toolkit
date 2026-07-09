@@ -359,28 +359,34 @@ fn rule(match_value: &str, icon: &str) -> IconRewriteRule {
     IconRewriteRule { match_value: match_value.to_string(), icon: icon.to_string() }
 }
 
+/// Every glyph here is a `\u{...}` escape, not a literal character — a
+/// literal nerd-font glyph typed directly into a string silently produced
+/// an *empty* string more than once while authoring this table (not a font
+/// coverage gap, an actually-empty `&str`), and only got caught because it
+/// showed up as blank instead of tofu. Escapes are the only way to be sure
+/// what's actually in the string without a rendered preview.
 fn default_icon_rewrite() -> Vec<IconRewriteRule> {
     vec![
-        rule("og-settings", ""),
+        rule("og-settings", "\u{eaf8}"),     // cod-gear
         rule("alacritty", "./"),
-        rule("brave-browser", "󰖟"),
-        rule("firefox", ""),
-        rule("chromium", ""),
-        rule("code-oss", "󰨞"),
-        rule("vesktop", "󰙯"),
-        rule("discord", "󰙯"),
-        rule("godot", ""),
-        rule("factorio", "󰊴"),
-        rule("steam_app", "󰊴"),
-        rule("steamapp", "󰊴"),
-        rule("steam", ""),
-        rule("spotify", ""),
-        rule("thunar", ""),
-        rule("nautilus", ""),
-        rule("vlc", "󰕼"),
-        rule("gimp", ""),
-        rule("obs", ""),
-        rule("minecraft", "󰍎"),
+        rule("brave-browser", "\u{f059f}"),  // md-brave (via nf-md alias used elsewhere)
+        rule("firefox", "\u{f269}"),         // fa-firefox
+        rule("chromium", "\u{f02af}"),       // md-google_chrome
+        rule("code-oss", "\u{f0a1e}"),
+        rule("vesktop", "\u{f066f}"),        // md-discord
+        rule("discord", "\u{f066f}"),
+        rule("godot", "\u{e7ee}"),           // dev-godot
+        rule("factorio", "\u{f02b4}"),
+        rule("steam_app", "\u{f02b4}"),
+        rule("steamapp", "\u{f02b4}"),
+        rule("steam", "\u{f1b6}"),           // fa-steam
+        rule("spotify", "\u{f1bc}"),         // fa-spotify
+        rule("thunar", "\u{e5ff}"),          // custom-folder
+        rule("nautilus", "\u{e5ff}"),        // custom-folder
+        rule("vlc", "\u{f057c}"),
+        rule("gimp", "\u{e7e7}"),            // dev-gimp
+        rule("obs", "\u{f1720}"),            // md-broadcast (no literal OBS glyph in this icon set)
+        rule("minecraft", "\u{f034e}"),
     ]
 }
 
@@ -426,7 +432,7 @@ impl Default for BarConfig {
                 },
                 ModuleConfig {
                     kind: ModuleKind::Launcher {
-                        icon: "".to_string(),
+                        icon: "\u{ee0d}".to_string(), // fa-robot — no literal Claude glyph in this icon set
                         tooltip: "Open Claude CLI".to_string(),
                         command: "alacritty -e claude --dangerously-skip-permissions".to_string(),
                     },
