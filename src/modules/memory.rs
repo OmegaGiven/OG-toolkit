@@ -1,8 +1,8 @@
-use iced::widget::{container, text};
+use iced::widget::container;
 use iced::{Color, Element, Length, Subscription};
 
 use crate::message::Message;
-use crate::module::{Module, Orientation};
+use crate::module::{label_value, Module, Orientation};
 use og_theme::AppColors;
 
 const WARNING_PCT: f32 = 75.0;
@@ -39,7 +39,11 @@ impl Memory {
 }
 
 impl Module for Memory {
-    fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
+    fn cell_length(&self, _size: u32, _orientation: Orientation) -> Length {
+        Length::Shrink
+    }
+
+    fn view(&self, colors: AppColors, _size: u32, orientation: Orientation) -> Element<'_, Message> {
         let fg = if self.usage_pct >= CRITICAL_PCT {
             CRITICAL_COLOR
         } else if self.usage_pct >= WARNING_PCT {
@@ -47,18 +51,9 @@ impl Module for Memory {
         } else {
             colors.text
         };
-        let label = format!("RAM\n{:.0}%", self.usage_pct);
-        container(
-            text(label)
-                .size(12)
-                .align_x(iced::alignment::Horizontal::Center)
-                .style(move |_| text::Style { color: Some(fg) }),
-        )
-        .width(size as u16)
-        .height(size as u16)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+        container(label_value("RAM", format!("{:.0}%", self.usage_pct), fg, orientation))
+            .padding(4)
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {

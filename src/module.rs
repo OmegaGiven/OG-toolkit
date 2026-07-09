@@ -1,11 +1,29 @@
 //! One trait every bar module implements — adding a new module later means
 //! implementing this trait, not touching bar layout code (PLAN.md section 5).
 
-use iced::{Element, Length, Subscription};
+use iced::widget::{column, row, text};
+use iced::{Color, Element, Length, Subscription};
 use og_config::Edge;
 use og_theme::AppColors;
 
 use crate::message::Message;
+
+/// Shared "short label + value" layout for cpu/memory-style modules.
+/// Horizontal bars lay the two side by side (room to breathe along the
+/// bar's own running direction); vertical bars stack label above value
+/// (that's the direction with room there instead). Either way this is
+/// sized to its own content (`Length::Shrink` via the caller's
+/// `cell_length` override) rather than forced into the fixed square every
+/// other module uses — that fixed square is what forced padding to 0 just
+/// to keep a value like "100%" from clipping.
+pub fn label_value<'a>(label: &'a str, value: String, color: Color, orientation: Orientation) -> Element<'a, Message> {
+    let label_widget = text(label).size(10).style(move |_| text::Style { color: Some(Color { a: 0.65, ..color }) });
+    let value_widget = text(value).size(12).style(move |_| text::Style { color: Some(color) });
+    match orientation {
+        Orientation::Horizontal => row![label_widget, value_widget].spacing(4).align_y(iced::Alignment::Center).into(),
+        Orientation::Vertical => column![label_widget, value_widget].align_x(iced::Alignment::Center).into(),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orientation {

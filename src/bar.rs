@@ -20,13 +20,13 @@ use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
 use crate::settings::{Section, SettingsButton};
 
-fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRule]) -> Vec<Box<dyn Module>> {
+fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRule], hour12: bool) -> Vec<Box<dyn Module>> {
     list.iter()
         .filter(|m| m.enabled)
         .filter_map(|m| -> Option<Box<dyn Module>> {
             match &m.kind {
                 ModuleKind::Workspaces => Some(Box::new(Workspaces::new(icon_rewrite.to_vec()))),
-                ModuleKind::Clock { timezone } => Some(Box::new(Clock::new(timezone.clone()))),
+                ModuleKind::Clock { timezone } => Some(Box::new(Clock::new(timezone.clone(), hour12))),
                 ModuleKind::Launcher { icon, command, .. } => {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))
                 }
@@ -55,6 +55,9 @@ fn section_list(bar_cfg: &mut BarConfig, section: Section) -> &mut Vec<ModuleCon
 pub struct Bar {
     colors: AppColors,
     bar_cfg: BarConfig,
+    /// Cached at startup, same as `colors` — not live-reloaded, matches
+    /// how the rest of the shared theme Config already behaves here.
+    hour12: bool,
     start: Vec<Box<dyn Module>>,
     center: Vec<Box<dyn Module>>,
     end: Vec<Box<dyn Module>>,
@@ -64,13 +67,16 @@ pub struct Bar {
 impl Bar {
     pub fn new() -> (Self, Task<Message>) {
         let bar_cfg = BarConfig::load();
-        let colors = AppColors::from_config(&Config::load(), "og-bar");
+        let config = Config::load();
+        let colors = AppColors::from_config(&config, "og-bar");
+        let hour12 = config.clock_12h;
         let bar = Self {
-            start: build_modules(&bar_cfg.modules_start, &bar_cfg.icon_rewrite),
-            center: build_modules(&bar_cfg.modules_center, &bar_cfg.icon_rewrite),
-            end: build_modules(&bar_cfg.modules_end, &bar_cfg.icon_rewrite),
+            start: build_modules(&bar_cfg.modules_start, &bar_cfg.icon_rewrite, hour12),
+            center: build_modules(&bar_cfg.modules_center, &bar_cfg.icon_rewrite, hour12),
+            end: build_modules(&bar_cfg.modules_end, &bar_cfg.icon_rewrite, hour12),
             colors,
             bar_cfg,
+            hour12,
             popup: None,
         };
         (bar, Task::none())
@@ -202,9 +208,9 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 m.enabled = !m.enabled;
             }
             let _ = bar.bar_cfg.save();
-            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite);
-            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite);
-            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite);
+            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite, bar.hour12);
+            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite, bar.hour12);
+            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite, bar.hour12);
         }
         Message::SetClockTimezone(section, index, tz) => {
             if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
@@ -213,9 +219,9 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 }
             }
             let _ = bar.bar_cfg.save();
-            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite);
-            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite);
-            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite);
+            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite, bar.hour12);
+            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite, bar.hour12);
+            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite, bar.hour12);
         }
         Message::ApplyRelayout => {
             let _ = bar.bar_cfg.save();
