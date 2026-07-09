@@ -180,6 +180,18 @@ pub struct Config {
     /// daemon watching sway's window-focus events.
     #[serde(default = "default_unfocused_opacity")]
     pub unfocused_opacity: f32,
+    /// When on, Steam launches inside gamescope (a nested wlroots
+    /// compositor). Alt-tabbing/losing focus on the *outer* sway desktop
+    /// then never touches the game's own window-activation state, since
+    /// from gamescope's perspective its client never lost focus — fixes
+    /// games (particularly Proton titles) throttling/pausing their
+    /// simulation when the host tabs away, which freezes them for anyone
+    /// else connected. Applied by `og-settings` writing/removing a
+    /// `~/.local/share/applications/steam.desktop` override (XDG user
+    /// overrides take precedence over the system one) rather than editing
+    /// per-game Steam launch options.
+    #[serde(default)]
+    pub gamescope_steam: bool,
 }
 
 fn default_border() -> i32 { 1 }
@@ -250,6 +262,7 @@ impl Default for Config {
             notif_fx_color: default_notif_fx_color(),
             notif_fx_duration_ms: default_notif_fx_duration(),
             unfocused_opacity: default_unfocused_opacity(),
+            gamescope_steam: false,
         }
     }
 }
