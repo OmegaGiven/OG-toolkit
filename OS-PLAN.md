@@ -1,8 +1,18 @@
 # OG-OS — plan to package this machine into an installable ISO
 
-Goal: take this exact sway/OG-toolkit desktop stack (base Arch + custom
+**Scope correction (2026-07-09):** the base image is a *curated*
+bare-bones set, not a clone of this machine. `packages.x86_64` /
+`foreign-packages.txt` in this repo are a frozen snapshot of this user's
+actual box (139+18 packages, including Steam, VirtualBox, a full dev
+toolchain, personal apps) — useful as an audit trail, but the real base
+package list lives in `BASE-PACKAGES.md`, curated down to what makes the
+OG-suite experience work out of the box plus genuinely everyday tools.
+Gaming/virtualization/dev-toolchain/personal-app packages become
+optional post-install groups, not base image contents.
+
+Goal: package the OG-toolkit sway desktop stack (base Arch + custom
 tools/configs/scripts built across the og-bar/og-settings/og-search/etc
-sessions) and turn it into something installable on a new or repeat
+sessions) into something installable on a new or repeat
 machine — an ISO, not a dotfiles script that half-works depending on
 what's already there.
 
@@ -34,11 +44,11 @@ is extracting it into a buildable, versioned form instead of "whatever
 state this disk happens to be in."
 
 ### 2a. Package manifest
-- `pacman -Qqe` → official repo package list (139 today) → `packages.x86_64` for archiso.
-- `pacman -Qqm` → AUR/foreign package list (18 today: yay, brave-bin, vesktop, alvr-bin, etc. — `discord` is *not* in this list; confirmed it's actually shipped in Arch's official `extra` repo now, not AUR) — archiso can't pull AUR at build time by default; either:
+- `packages.x86_64` / `foreign-packages.txt` in this repo = this machine's full snapshot (audit trail only, per the scope correction above).
+- **`BASE-PACKAGES.md` is the actual base list** — curated down to core system + compositor/session + the OG suite + audio/bluetooth/network + GPU driver breadth + Qt theming + a short everyday-utilities list + yay. Gaming/virtualization/dev-toolchain/personal-app packages from this machine's snapshot are explicitly excluded, listed there as optional post-install groups instead.
+- The only foreign/AUR package base actually needs is `yay` itself (the AUR helper) — everything else foreign on this machine is either superseded by an OG-suite tool or a personal app, both excluded from base. So archiso's AUR-at-build-time problem barely applies to the *base* image; it only resurfaces if/when an optional group (gaming, etc.) is built out later, at which point these still apply:
   - (a) vendor a local pacman repo of prebuilt AUR packages baked into the ISO (`repo-add`, then a local `[ogos]` repo entry in the image's pacman.conf), or
-  - (b) ship `yay` + a first-boot script that pulls AUR packages post-install (needs network at install time — acceptable for a personal respin, not for the "airgapped installer" ideal).
-  - Recommendation: (a) for anything used at every boot (yay itself, mangohud, gamemode-adjacent), (b) as a documented fallback for the long tail.
+  - (b) ship `yay` + a first-boot/on-demand script that pulls AUR packages when a group is installed (needs network at that point — acceptable, matches how any optional group installs).
 
 ### 2b. Dotfiles / configs
 Already tracked ad hoc under `~/.config/` — needs a single "skeleton"
