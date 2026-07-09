@@ -69,6 +69,12 @@ SysMonitor tab embeds it directly, not optional) `unzip` `wget` `less`
 players in a *bare-bones* base; `vlc` is one `pacman -S` away for anyone
 who wants it.
 
+### Printing
+`cups` `cups-pdf` `ghostscript` `gsfonts` `gutenprint` — backs
+og-settings' Printing tab (driverless IPP-Everywhere setup covers most
+modern printers out of the box; `gutenprint`/`ghostscript` widen
+coverage for older/PostScript-ish models).
+
 ### AUR helper
 `yay` — kept even though the base image doesn't itself need AUR, since
 it's the standard way anyone extends this system afterward.
@@ -79,20 +85,23 @@ it's the standard way anyone extends this system afterward.
 - **Gaming stack**: `steam` `gamescope` `gamemode` `lib32-gamemode` `mangohud` `lib32-mangohud` `lutris` `heroic-games-launcher-bin` `moonlight-qt` `wine-staging` `winetricks` `alvr-bin` `alvr-bin-debug` — real, well-defined "gaming" optional group for later, not base.
 - **Virtualization stack**: `qemu-desktop` `qemu-user-static` `virt-manager` `virt-viewer` `virtualbox` `virtualbox-guest-iso` `libguestfs` `nfs-utils` `multipath-tools` `vde2` `dnsmasq` — optional "virtualization" group.
 - **Dev toolchain**: `docker` `docker-compose` `code` `github-cli` `rustup` `npm` `nvm` `wasm-pack` `cmake` `cargo-about` `jdk17-openjdk` `android-sdk-cmdline-tools-latest` `android-tools` `python-protobuf` — optional "development" group.
-- **Personal apps (this user's choices, not defaults for anyone)**: `discord` `vesktop` `vesktop-debug` `brave-bin` `min-browser-bin` `gimp` `plasticity-bin` `obs-studio` `godot` `sidequest-bin` `sidequest-bin-debug` `brother-hll2300d` `brother-hll2300d-debug` `usbmuxd` `sshpass` `fish` `yazi` `cups` `cups-pdf` `ghostscript` `gsfonts` `gutenprint` `dolphin`
+- **Personal apps (this user's choices, not defaults for anyone)**: `discord` `vesktop` `vesktop-debug` `brave-bin` `min-browser-bin` `gimp` `plasticity-bin` `obs-studio` `godot` `sidequest-bin` `sidequest-bin-debug` `brother-hll2300d` `brother-hll2300d-debug` `usbmuxd` `sshpass` `fish` `yazi` `dolphin`
 - **Qt theming** (`qt6-wayland` `qt5ct` `qt6ct` `breeze`): only existed on this machine to make Dolphin look right — checked, nothing else installed actually depends on them (`Required By: None` on all four). Since Dolphin's cut and og-files/file-manager is the intended default, these go too rather than shipping dead weight.
-
-Cups/printing demoted to optional rather than dropped outright — common
-enough to be a real "everyday" group, just not universal enough to force
-into every install.
 
 No default browser ships in base. Recommend documenting "install
 firefox or your browser of choice" in first-boot rather than picking one
 for everyone — `brave-bin` here was this user's personal pick via AUR,
 not a default worth baking in.
 
+### Printing — now base (resolved)
+og-settings shipped a real Printing tab (detects configured/unconfigured
+printers via CUPS, driverless IPP-Everywhere setup, driver-package
+hints, default/remove/test-page control — verified live against this
+machine's actual Brother printer). That makes printing an OG-suite
+feature, not a "maybe someone prints" extra, so `cups` `cups-pdf`
+`ghostscript` `gsfonts` `gutenprint` move from "cut" into base.
+
 ## Open decisions for you
 
-1. Cups/printing: base or optional? (leaning optional above)
-2. `base-devel`: keep for AUR-friendliness, or cut for minimalism?
+1. `base-devel`: keep for AUR-friendliness, or cut for minimalism?
 3. Any default browser at all, or leave that entirely to first boot?
