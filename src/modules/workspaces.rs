@@ -142,9 +142,14 @@ impl Module for Workspaces {
                 let mut parts: Vec<Element<Message>> =
                     vec![text(ws.name.clone()).size(14).style(move |_| text::Style { color: Some(fg) }).into()];
                 parts.extend(ws.window_icons.iter().map(|icon| {
+                    // Icon-rewrite entries are user-editable and not all
+                    // nerd-font glyphs — e.g. "alacritty" maps to plain
+                    // "./" — so this can't force nerd_font() blindly like
+                    // the fixed bar-chrome icons do (settings gear, power,
+                    // etc). Same per-string heuristic as launcher icons.
                     text(icon.clone())
                         .size(14)
-                        .font(icon_font::nerd_font())
+                        .font(icon_font::font_for(icon))
                         .style(move |_| text::Style { color: Some(fg) })
                         .into()
                 }));

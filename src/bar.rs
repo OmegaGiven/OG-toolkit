@@ -157,11 +157,18 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             });
         }
         // Edge/thickness need a real wlr layer-shell relayout this process
-        // can't do to its own already-mapped surface — they're staged here
-        // and only take effect once Apply & Save respawns the bar.
+        // can't do to its own already-mapped surface. Edge is a discrete
+        // button click, not a drag — nothing is lost by applying it (i.e.
+        // respawning) the instant it's clicked, and requiring a separate
+        // "Apply" click after was a real discoverability gap (a user
+        // clicking Left/Right/Bottom reasonably expects the bar to just
+        // move). Thickness is a slider — respawning on every tick of a
+        // drag would spam processes, so that one still stages and needs
+        // the explicit Apply button.
         Message::SetEdge(edge) => {
             bar.bar_cfg.position = *edge;
             let _ = bar.bar_cfg.save();
+            return Task::done(Message::ApplyRelayout);
         }
         Message::SetThickness(v) => {
             bar.bar_cfg.thickness = *v;

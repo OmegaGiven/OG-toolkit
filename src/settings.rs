@@ -144,7 +144,7 @@ pub fn popup_view(colors: AppColors, bar_cfg: &og_config::BarConfig) -> Element<
     )
     .spacing(4);
 
-    let apply_button = button(text("Apply relayout (Edge/Thickness)").size(12))
+    let apply_button = button(text("Apply thickness change").size(12))
         .padding(6)
         .style(move |_, status| button::Style {
             background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
