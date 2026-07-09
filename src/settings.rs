@@ -6,7 +6,7 @@
 //! writes the config and respawns the bar to pick up the new anchor/size,
 //! matching the plan's own carve-out for changes that need a full relayout.
 
-use iced::widget::{button, checkbox, column, container, row, slider, text};
+use iced::widget::{button, checkbox, column, container, row, slider, text, text_input};
 use iced::{Background, Border, Color, Element, Length};
 
 use og_config::{Edge, ModuleKind};
@@ -99,7 +99,16 @@ fn labeled_slider(
 
 fn module_toggle_row(_colors: AppColors, section: Section, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
     let label = kind_label(kind);
-    row![checkbox(label, enabled).on_toggle(move |_| Message::ToggleModule(section, index))].into()
+    let mut r = row![checkbox(label, enabled).on_toggle(move |_| Message::ToggleModule(section, index))].spacing(8);
+    if let ModuleKind::Clock { timezone } = kind {
+        r = r.push(
+            text_input("IANA tz, e.g. America/Chicago (blank = local)", timezone)
+                .size(11)
+                .width(Length::Fixed(180.0))
+                .on_input(move |v| Message::SetClockTimezone(section, index, v)),
+        );
+    }
+    r.into()
 }
 
 pub fn popup_view(colors: AppColors, bar_cfg: &og_config::BarConfig) -> Element<'_, Message> {

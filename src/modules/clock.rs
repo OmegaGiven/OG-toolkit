@@ -5,11 +5,10 @@ use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
 
-/// Non-empty `timezone` (multi-tz clocks) isn't wired yet — needs a tz
-/// database crate (`chrono-tz`) not currently a dependency anywhere in
-/// OG-toolkit. Local time only for now.
 pub struct Clock {
-    #[allow(dead_code)]
+    /// Empty means local time. Anything else is parsed as an IANA tz
+    /// name (e.g. "America/Chicago") on every tick — invalid names just
+    /// fall back to local time rather than showing garbage.
     timezone: String,
 }
 
@@ -17,14 +16,22 @@ impl Clock {
     pub fn new(timezone: String) -> Self {
         Self { timezone }
     }
+
+    fn label(&self) -> String {
+        if self.timezone.is_empty() {
+            return chrono::Local::now().format("%H:%M\n%m/%d").to_string();
+        }
+        match self.timezone.parse::<chrono_tz::Tz>() {
+            Ok(tz) => chrono::Utc::now().with_timezone(&tz).format("%H:%M\n%m/%d").to_string(),
+            Err(_) => chrono::Local::now().format("%H:%M\n%m/%d").to_string(),
+        }
+    }
 }
 
 impl Module for Clock {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
-        let now = chrono::Local::now();
-        let label = now.format("%H:%M\n%m/%d").to_string();
         container(
-            text(label)
+            text(self.label())
                 .size(13)
                 .align_x(iced::alignment::Horizontal::Center)
                 .style(move |_| text::Style { color: Some(colors.text) }),

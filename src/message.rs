@@ -22,5 +22,6 @@ pub enum Message {
     SetSpacing(u32),
     SetPadding(u32),
     ToggleModule(Section, usize),
+    SetClockTimezone(Section, usize, String),
     ApplyRelayout,
 }

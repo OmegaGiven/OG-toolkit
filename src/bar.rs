@@ -181,6 +181,17 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             bar.center = build_modules(&bar.bar_cfg.modules_center);
             bar.end = build_modules(&bar.bar_cfg.modules_end);
         }
+        Message::SetClockTimezone(section, index, tz) => {
+            if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
+                if let ModuleKind::Clock { timezone } = &mut m.kind {
+                    *timezone = tz.clone();
+                }
+            }
+            let _ = bar.bar_cfg.save();
+            bar.start = build_modules(&bar.bar_cfg.modules_start);
+            bar.center = build_modules(&bar.bar_cfg.modules_center);
+            bar.end = build_modules(&bar.bar_cfg.modules_end);
+        }
         Message::ApplyRelayout => {
             let _ = bar.bar_cfg.save();
             if let Ok(exe) = std::env::current_exe() {
