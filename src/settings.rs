@@ -9,19 +9,12 @@
 use iced::widget::{button, checkbox, column, container, mouse_area, row, slider, text, text_input};
 use iced::{Background, Border, Color, Element, Length};
 
-use og_config::{Edge, ModuleKind};
+use og_config::{Edge, ModuleKind, SectionAlign};
 
 use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Section {
-    Start,
-    Center,
-    End,
-}
 
 pub struct SettingsButton;
 
@@ -102,7 +95,23 @@ fn labeled_slider(
     .into()
 }
 
-fn module_toggle_row(colors: AppColors, section: Section, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
+fn align_button(colors: AppColors, label: &'static str, align: SectionAlign, current: SectionAlign, section: usize) -> Element<'static, Message> {
+    let selected = align == current;
+    let fg = if selected { colors.bar_bg } else { colors.text };
+    let bg = if selected { colors.accent } else { Color::TRANSPARENT };
+    button(text(label).size(11).style(move |_| text::Style { color: Some(fg) }))
+        .padding([3, 8])
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(bg)),
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            text_color: fg,
+            ..Default::default()
+        })
+        .on_press(Message::SetSectionAlign(section, align))
+        .into()
+}
+
+fn module_toggle_row(colors: AppColors, section: usize, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
     let label = kind_label(kind);
     let mut r = row![checkbox(label, enabled).on_toggle(move |_| Message::ToggleModule(section, index))].spacing(8);
     if let ModuleKind::Clock { timezone } = kind {
@@ -132,7 +141,7 @@ fn module_toggle_row(colors: AppColors, section: Section, index: usize, kind: &M
     r.into()
 }
 
-fn add_module_row(colors: AppColors, section: Section, present: &[ModuleKind]) -> Element<'static, Message> {
+fn add_module_row(colors: AppColors, section: usize, present: &[ModuleKind]) -> Element<'static, Message> {
     let addable: Vec<Element<Message>> = ModuleKind::addable()
         .iter()
         .filter(|k| !present.contains(k))
@@ -178,24 +187,62 @@ pub fn popup_view(colors: AppColors, bar_cfg: &og_config::BarConfig) -> Element<
     ]
     .spacing(8);
 
-    let section_block = |title: &'static str, section: Section, list: &[og_config::ModuleConfig]| -> Element<'static, Message> {
-        let present: Vec<ModuleKind> = list.iter().map(|m| m.kind.clone()).collect();
-        let rows: Vec<Element<Message>> =
-            list.iter().enumerate().map(|(i, m)| module_toggle_row(colors, section, i, &m.kind, m.enabled)).collect();
+    let section_block = |index: usize, sec: &og_config::BarSection| -> Element<'static, Message> {
+        let present: Vec<ModuleKind> = sec.modules.iter().map(|m| m.kind.clone()).collect();
+        let rows: Vec<Element<Message>> = sec
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(i, m)| module_toggle_row(colors, index, i, &m.kind, m.enabled))
+            .collect();
+        let align_row = row![
+            align_button(colors, SectionAlign::Start.label(bar_cfg.position), SectionAlign::Start, sec.align, index),
+            align_button(colors, SectionAlign::Middle.label(bar_cfg.position), SectionAlign::Middle, sec.align, index),
+            align_button(colors, SectionAlign::End.label(bar_cfg.position), SectionAlign::End, sec.align, index),
+        ]
+        .spacing(4);
+        let remove_section_btn = button(text("Remove section").size(11).style(move |_| text::Style { color: Some(colors.text) }))
+            .padding([2, 6])
+            .style(move |_, _| button::Style {
+                background: Some(Background::Color(Color { r: 0.6, g: 0.1, b: 0.1, a: 1.0 })),
+                text_color: Color::WHITE,
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                ..Default::default()
+            })
+            .on_press(Message::RemoveSection(index));
         column![
-            text(title).size(11).style(move |_| text::Style { color: Some(colors.dim_text) }),
+            row![
+                text(format!("Section {}", index + 1)).size(11).style(move |_| text::Style { color: Some(colors.dim_text) }),
+                iced::widget::horizontal_space(),
+                remove_section_btn,
+            ]
+            .align_y(iced::Alignment::Center),
+            labeled_slider(colors, "Share", sec.percent, 5..=100, move |v| Message::SetSectionPercent(index, v)),
+            align_row,
             column(rows).spacing(4),
-            add_module_row(colors, section, &present),
+            add_module_row(colors, index, &present),
         ]
         .spacing(6)
         .into()
     };
 
-    let module_list = column![
-        section_block("Start", Section::Start, &bar_cfg.modules_start),
-        section_block("Center", Section::Center, &bar_cfg.modules_center),
-        section_block("End", Section::End, &bar_cfg.modules_end),
-    ]
+    let add_section_btn = button(text("+ Add section").size(12).style(move |_| text::Style { color: Some(colors.text) }))
+        .padding([4, 10])
+        .style(move |_, status| button::Style {
+            background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                colors.accent
+            } else {
+                colors.surface
+            })),
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            text_color: colors.text,
+            ..Default::default()
+        })
+        .on_press(Message::AddSection);
+
+    let module_list = column(
+        bar_cfg.sections.iter().enumerate().map(|(i, s)| section_block(i, s)).chain(std::iter::once(add_section_btn.into())),
+    )
     .spacing(12);
 
     let apply_button = button(text("Apply thickness change").size(12))

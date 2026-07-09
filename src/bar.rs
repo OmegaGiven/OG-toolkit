@@ -3,7 +3,7 @@ use iced::{Element, Length, Subscription, Task};
 
 use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
 
-use og_config::{BarConfig, Config, Edge, ModuleConfig, ModuleKind};
+use og_config::{BarConfig, BarSection, Config, Edge, ModuleConfig, ModuleKind, SectionAlign};
 use og_theme::AppColors;
 
 use crate::message::Message;
@@ -19,7 +19,7 @@ use crate::modules::tray::Tray;
 use crate::modules::workspaces::Workspaces;
 use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
-use crate::settings::{Section, SettingsButton};
+use crate::settings::SettingsButton;
 
 fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRule], hour12: bool) -> Vec<Box<dyn Module>> {
     list.iter()
@@ -44,12 +44,25 @@ fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRu
         .collect()
 }
 
-fn section_list(bar_cfg: &mut BarConfig, section: Section) -> &mut Vec<ModuleConfig> {
-    match section {
-        Section::Start => &mut bar_cfg.modules_start,
-        Section::Center => &mut bar_cfg.modules_center,
-        Section::End => &mut bar_cfg.modules_end,
-    }
+/// A runtime section pairs the config-driven layout knobs (percent/align)
+/// with the actual built module instances — rebuilt wholesale by
+/// `rebuild_modules` any time the module list changes, same as the old
+/// fixed start/center/end fields were.
+struct SectionRuntime {
+    percent: u32,
+    align: SectionAlign,
+    modules: Vec<Box<dyn Module>>,
+}
+
+fn build_sections(cfg: &BarConfig, hour12: bool) -> Vec<SectionRuntime> {
+    cfg.sections
+        .iter()
+        .map(|s| SectionRuntime {
+            percent: s.percent,
+            align: s.align,
+            modules: build_modules(&s.modules, &cfg.icon_rewrite, hour12),
+        })
+        .collect()
 }
 
 pub struct Bar {
@@ -58,9 +71,7 @@ pub struct Bar {
     /// Cached at startup, same as `colors` — not live-reloaded, matches
     /// how the rest of the shared theme Config already behaves here.
     hour12: bool,
-    start: Vec<Box<dyn Module>>,
-    center: Vec<Box<dyn Module>>,
-    end: Vec<Box<dyn Module>>,
+    sections: Vec<SectionRuntime>,
     popup: Option<PopupState>,
 }
 
@@ -70,31 +81,22 @@ impl Bar {
         let config = Config::load();
         let colors = AppColors::from_config(&config, "og-bar");
         let hour12 = config.clock_12h;
-        let bar = Self {
-            start: build_modules(&bar_cfg.modules_start, &bar_cfg.icon_rewrite, hour12),
-            center: build_modules(&bar_cfg.modules_center, &bar_cfg.icon_rewrite, hour12),
-            end: build_modules(&bar_cfg.modules_end, &bar_cfg.icon_rewrite, hour12),
-            colors,
-            bar_cfg,
-            hour12,
-            popup: None,
-        };
+        let sections = build_sections(&bar_cfg, hour12);
+        let bar = Self { sections, colors, bar_cfg, hour12, popup: None };
         (bar, Task::none())
     }
 
     fn all_modules_mut(&mut self) -> impl Iterator<Item = &mut Box<dyn Module>> {
-        self.start.iter_mut().chain(self.center.iter_mut()).chain(self.end.iter_mut())
+        self.sections.iter_mut().flat_map(|s| s.modules.iter_mut())
     }
 
     fn all_modules(&self) -> impl Iterator<Item = &Box<dyn Module>> {
-        self.start.iter().chain(self.center.iter()).chain(self.end.iter())
+        self.sections.iter().flat_map(|s| s.modules.iter())
     }
 }
 
 fn rebuild_modules(bar: &mut Bar) {
-    bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite, bar.hour12);
-    bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite, bar.hour12);
-    bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite, bar.hour12);
+    bar.sections = build_sections(&bar.bar_cfg, bar.hour12);
 }
 
 pub fn remove_id(bar: &mut Bar, id: iced::window::Id) {
@@ -257,37 +259,62 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             let _ = bar.bar_cfg.save();
         }
         Message::ToggleModule(section, index) => {
-            if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
+            if let Some(m) = bar.bar_cfg.sections.get_mut(*section).and_then(|s| s.modules.get_mut(*index)) {
                 m.enabled = !m.enabled;
             }
             let _ = bar.bar_cfg.save();
             rebuild_modules(bar);
         }
         Message::RemoveModule(section, index) => {
-            let list = section_list(&mut bar.bar_cfg, *section);
-            if *index < list.len() {
-                list.remove(*index);
+            if let Some(list) = bar.bar_cfg.sections.get_mut(*section).map(|s| &mut s.modules) {
+                if *index < list.len() {
+                    list.remove(*index);
+                }
             }
             let _ = bar.bar_cfg.save();
             rebuild_modules(bar);
         }
         Message::AddModule(section, kind) => {
-            section_list(&mut bar.bar_cfg, *section).push(ModuleConfig {
-                kind: kind.clone(),
-                enabled: true,
-                size_override: None,
-            });
+            if let Some(s) = bar.bar_cfg.sections.get_mut(*section) {
+                s.modules.push(ModuleConfig { kind: kind.clone(), enabled: true, size_override: None });
+            }
             let _ = bar.bar_cfg.save();
             rebuild_modules(bar);
         }
         Message::SetClockTimezone(section, index, tz) => {
-            if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
+            if let Some(m) = bar.bar_cfg.sections.get_mut(*section).and_then(|s| s.modules.get_mut(*index)) {
                 if let ModuleKind::Clock { timezone } = &mut m.kind {
                     *timezone = tz.clone();
                 }
             }
             let _ = bar.bar_cfg.save();
             rebuild_modules(bar);
+        }
+        Message::AddSection => {
+            let id = bar.bar_cfg.next_section_id;
+            bar.bar_cfg.next_section_id += 1;
+            bar.bar_cfg.sections.push(BarSection { id, percent: 20, align: SectionAlign::Middle, modules: Vec::new() });
+            let _ = bar.bar_cfg.save();
+            rebuild_modules(bar);
+        }
+        Message::RemoveSection(index) => {
+            if *index < bar.bar_cfg.sections.len() {
+                bar.bar_cfg.sections.remove(*index);
+            }
+            let _ = bar.bar_cfg.save();
+            rebuild_modules(bar);
+        }
+        Message::SetSectionPercent(index, percent) => {
+            if let Some(s) = bar.bar_cfg.sections.get_mut(*index) {
+                s.percent = *percent;
+            }
+            let _ = bar.bar_cfg.save();
+        }
+        Message::SetSectionAlign(index, align) => {
+            if let Some(s) = bar.bar_cfg.sections.get_mut(*index) {
+                s.align = *align;
+            }
+            let _ = bar.bar_cfg.save();
         }
         Message::ApplyRelayout => {
             let _ = bar.bar_cfg.save();
@@ -371,35 +398,39 @@ fn bar_view(bar: &Bar) -> Element<'_, Message> {
         }
     }
 
+    // Each user-defined section gets `percent` of the bar's length via
+    // FillPortion (a relative share, not a strict 0-100 that must sum to
+    // 100 — see BarSection's own doc comment) and packs its modules
+    // toward Start/Middle/End of that slice.
     let content: Element<'_, Message> = match orientation {
-        Orientation::Horizontal => row![
-            container(section(&bar.start, bar, size, orientation, thickness, spacing))
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Left),
-            container(section(&bar.center, bar, size, orientation, thickness, spacing))
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-            container(section(&bar.end, bar, size, orientation, thickness, spacing))
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Right),
-        ]
-        .padding(bar.bar_cfg.padding as u16)
-        .align_y(iced::Alignment::Center)
-        .into(),
-        Orientation::Vertical => column![
-            container(section(&bar.start, bar, size, orientation, thickness, spacing))
-                .height(Length::Fill)
-                .align_y(iced::alignment::Vertical::Top),
-            container(section(&bar.center, bar, size, orientation, thickness, spacing))
-                .height(Length::Fill)
-                .align_y(iced::alignment::Vertical::Center),
-            container(section(&bar.end, bar, size, orientation, thickness, spacing))
-                .height(Length::Fill)
-                .align_y(iced::alignment::Vertical::Bottom),
-        ]
-        .padding(bar.bar_cfg.padding as u16)
-        .align_x(iced::Alignment::Center)
-        .into(),
+        Orientation::Horizontal => {
+            let cols = bar.sections.iter().map(|s| {
+                let align = match s.align {
+                    SectionAlign::Start => iced::alignment::Horizontal::Left,
+                    SectionAlign::Middle => iced::alignment::Horizontal::Center,
+                    SectionAlign::End => iced::alignment::Horizontal::Right,
+                };
+                container(section(&s.modules, bar, size, orientation, thickness, spacing))
+                    .width(Length::FillPortion(s.percent.max(1) as u16))
+                    .align_x(align)
+                    .into()
+            });
+            row(cols).padding(bar.bar_cfg.padding as u16).align_y(iced::Alignment::Center).into()
+        }
+        Orientation::Vertical => {
+            let rows = bar.sections.iter().map(|s| {
+                let align = match s.align {
+                    SectionAlign::Start => iced::alignment::Vertical::Top,
+                    SectionAlign::Middle => iced::alignment::Vertical::Center,
+                    SectionAlign::End => iced::alignment::Vertical::Bottom,
+                };
+                container(section(&s.modules, bar, size, orientation, thickness, spacing))
+                    .height(Length::FillPortion(s.percent.max(1) as u16))
+                    .align_y(align)
+                    .into()
+            });
+            column(rows).padding(bar.bar_cfg.padding as u16).align_x(iced::Alignment::Center).into()
+        }
     };
 
     container(content)
