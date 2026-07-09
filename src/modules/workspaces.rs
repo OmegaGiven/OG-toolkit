@@ -31,6 +31,7 @@ struct RawWorkspace {
 pub struct WindowIcon {
     pub con_id: i64,
     pub icon: String,
+    pub focused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -78,9 +79,10 @@ fn collect_windows(tree: &serde_json::Value, rules: &[IconRewriteRule]) -> std::
         let class = node.get("window_properties").and_then(|wp| wp.get("class")).and_then(|v| v.as_str());
         if let (Some(con_id), Some(ws_name)) = (node.get("id").and_then(|v| v.as_i64()), ws_name) {
             if app_id.is_some() || class.is_some() {
+                let focused = node.get("focused").and_then(|v| v.as_bool()).unwrap_or(false);
                 out.entry(ws_name.to_string())
                     .or_default()
-                    .push(WindowIcon { con_id, icon: resolve_icon(app_id, class, rules) });
+                    .push(WindowIcon { con_id, icon: resolve_icon(app_id, class, rules), focused });
             }
         }
 
@@ -170,12 +172,14 @@ impl Module for Workspaces {
                 // so font_for() picks per-icon rather than forcing one.
                 let window_btns = ws.windows.iter().map(|w| {
                     let con_id = w.con_id;
+                    let win_focused = w.focused;
+                    let win_fg = if win_focused { colors.bar_bg } else { colors.text };
                     button(
                         container(
                             text(w.icon.clone())
                                 .size(14)
                                 .font(icon_font::font_for(&w.icon))
-                                .style(move |_| text::Style { color: Some(colors.text) }),
+                                .style(move |_| text::Style { color: Some(win_fg) }),
                         )
                         .width(size as u16)
                         .height(size as u16)
@@ -184,13 +188,15 @@ impl Module for Workspaces {
                     )
                     .padding(0)
                     .style(move |_, status| button::Style {
-                        background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                        background: Some(Background::Color(if win_focused {
+                            colors.accent
+                        } else if matches!(status, button::Status::Hovered) {
                             colors.header_btn_bg
                         } else {
                             Color::TRANSPARENT
                         })),
                         border: Border { radius: colors.radius.into(), ..Default::default() },
-                        text_color: colors.text,
+                        text_color: win_fg,
                         ..Default::default()
                     })
                     .on_press(Message::FocusWindow(con_id))
