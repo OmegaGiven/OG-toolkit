@@ -1,4 +1,4 @@
-use iced::widget::{column, container, row, text, text_input};
+use iced::widget::{column, container, row, scrollable, text, text_input};
 use iced::{Background, Border, Color, Element, Event, Length, Task};
 use iced::keyboard;
 
@@ -11,42 +11,53 @@ use crate::launch;
 use crate::settings_search::{self, SettingsMatch};
 use og_theme::{apply_color_variance, hex_to_color};
 
+const MAX_DISPLAYED_FILES: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Column {
+    Apps,
+    Settings,
+    Files,
+}
+
+impl Column {
+    const ALL: [Column; 3] = [Column::Apps, Column::Settings, Column::Files];
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     QueryChanged(String),
     MoveSelection(i32),
+    MoveColumn(i32),
+    /// Click anywhere in a column selects *and* activates that row in one
+    /// step, same as a normal launcher's click-to-open — no separate
+    /// "select then press Enter" needed with a mouse.
+    RowClicked(Column, usize),
     Activate,
     Close,
-    /// Carries the query it was searched *for* — file search is async, so
-    /// a slow result for an old keystroke arriving after the user has kept
-    /// typing must be discarded, not rendered against the wrong query.
-    FileResults(String, Vec<PathBuf>),
+    FileFound(PathBuf),
 }
 
-/// Window is a fixed 420px tall with no scrollable — this is how many rows
-/// fit before the list would start rendering off the bottom edge.
-const VISIBLE_ROWS: usize = 7;
-
-/// What pressing Enter on the currently-selected row actually does.
-enum Action<'a> {
+/// What pressing Enter (or clicking) on a row in the Apps column does.
+enum AppAction<'a> {
     GoAlias(String),
     WebSearch(String),
     AskAi(String),
     LaunchApp(&'a AppEntry),
-    OpenFile(&'a PathBuf),
-    OpenSetting(SettingsMatch),
 }
 
 pub struct App {
     config: Config,
     apps: Vec<AppEntry>,
     query: String,
-    selected: usize,
-    /// Only rendered when `file_results_query == query` — guards against
-    /// showing results for whatever the user was typing a few keystrokes
-    /// ago while this search was still in flight.
-    file_results: Vec<PathBuf>,
-    file_results_query: String,
+    column: Column,
+    selected_apps: usize,
+    selected_settings: usize,
+    selected_files: usize,
+    /// Populated incrementally by the file-search subscription (keyed by
+    /// query — changing the query cancels the in-flight `find` and starts
+    /// a fresh one) as results actually arrive, not all at once.
+    files: Vec<PathBuf>,
 }
 
 impl App {
@@ -56,9 +67,11 @@ impl App {
                 config: Config::load(),
                 apps: load_app_registry(),
                 query: String::new(),
-                selected: 0,
-                file_results: Vec::new(),
-                file_results_query: String::new(),
+                column: Column::Apps,
+                selected_apps: 0,
+                selected_settings: 0,
+                selected_files: 0,
+                files: Vec::new(),
             },
             text_input::focus(text_input::Id::new("query")),
         )
@@ -68,11 +81,11 @@ impl App {
     /// one action. Anything else: the single best-matching app first (if
     /// there is one), then web search, then ask AI, then the rest of the
     /// matching apps.
-    fn actions(&self) -> Vec<Action<'_>> {
+    fn app_actions(&self) -> Vec<AppAction<'_>> {
         let trimmed = self.query.trim();
         if let Some(alias) = trimmed.strip_prefix("go/") {
             if !alias.is_empty() {
-                return vec![Action::GoAlias(alias.to_string())];
+                return vec![AppAction::GoAlias(alias.to_string())];
             }
         }
         let matched = filter_apps(&self.apps, &self.query);
@@ -81,81 +94,152 @@ impl App {
         let mut rest = matched.into_iter();
         if !self.query.trim().is_empty() {
             if let Some(best) = rest.next() {
-                actions.push(Action::LaunchApp(best));
+                actions.push(AppAction::LaunchApp(best));
             }
         }
-        actions.push(Action::WebSearch(self.query.clone()));
-        actions.push(Action::AskAi(self.query.clone()));
-        actions.extend(rest.take(8).map(Action::LaunchApp));
-
-        // Both last, in that order — real filesystem I/O and settings
-        // lookups are lower-priority than anything above, which is either
-        // free (web/AI) or already-known-installed apps.
-        if self.config.search_files_enabled && self.file_results_query == self.query {
-            actions.extend(self.file_results.iter().map(Action::OpenFile));
-        }
-        if self.config.search_settings_enabled {
-            actions.extend(settings_search::search(&self.query).into_iter().map(Action::OpenSetting));
-        }
-
+        actions.push(AppAction::WebSearch(self.query.clone()));
+        actions.push(AppAction::AskAi(self.query.clone()));
+        actions.extend(rest.take(8).map(AppAction::LaunchApp));
         actions
+    }
+
+    fn settings_matches(&self) -> Vec<SettingsMatch> {
+        if self.config.search_settings_enabled {
+            settings_search::search(&self.query)
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn column_len(&self, col: Column) -> usize {
+        match col {
+            Column::Apps => self.app_actions().len(),
+            Column::Settings => self.settings_matches().len(),
+            Column::Files => self.files.len(),
+        }
+    }
+
+    /// Shared by both Enter (whatever's selected in the current column)
+    /// and a direct row click (which supplies its own column/index instead
+    /// of trusting current selection state).
+    fn activate(&self, col: Column, index: usize) -> Task<Message> {
+        match col {
+            Column::Apps => match self.app_actions().into_iter().nth(index) {
+                Some(AppAction::GoAlias(alias)) => launch::go_alias(&self.config, &alias),
+                Some(AppAction::WebSearch(q)) if !q.trim().is_empty() => launch::web_search(&self.config, &q),
+                Some(AppAction::AskAi(q)) if !q.trim().is_empty() => launch::ask_ai(&self.config, &q),
+                Some(AppAction::LaunchApp(entry)) => launch::launch_app(&self.config, &entry.exec),
+                _ => return Task::none(),
+            },
+            Column::Settings => match self.settings_matches().get(index) {
+                Some(m) => launch::open_settings_tab(m.tab_arg),
+                None => return Task::none(),
+            },
+            Column::Files => match self.files.get(index) {
+                Some(path) => launch::open_file(path),
+                None => return Task::none(),
+            },
+        }
+        iced::exit()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::QueryChanged(q) => {
-                self.query = q.clone();
-                self.selected = 0;
-                if self.config.search_files_enabled && !q.trim().is_empty() {
-                    Task::future(async move { Message::FileResults(q.clone(), file_search::search(q).await) })
-                } else {
-                    Task::none()
-                }
+                self.query = q;
+                self.selected_apps = 0;
+                self.selected_settings = 0;
+                self.selected_files = 0;
+                // Not cleared via a message round-trip — the file-search
+                // subscription is keyed by query text, so changing it here
+                // is what actually cancels the in-flight `find` for the
+                // old query and starts a fresh one for the new one.
+                self.files.clear();
+                Task::none()
             }
-            Message::FileResults(for_query, results) => {
-                if for_query == self.query {
-                    self.file_results_query = for_query;
-                    self.file_results = results;
+            Message::FileFound(path) => {
+                // Found while testing: a broad query (e.g. "og") can match
+                // well over a thousand files under a real home directory —
+                // unbounded growth here would flood the column and re-render
+                // an ever-larger widget tree on every single result. The
+                // underlying `find` keeps running in the background past
+                // this cap (killed instead once the query actually
+                // changes), but nothing past it gets displayed.
+                if self.files.len() < MAX_DISPLAYED_FILES {
+                    self.files.push(path);
                 }
                 Task::none()
             }
             Message::MoveSelection(delta) => {
-                let len = self.actions().len();
+                let len = self.column_len(self.column);
+                let selected = match self.column {
+                    Column::Apps => &mut self.selected_apps,
+                    Column::Settings => &mut self.selected_settings,
+                    Column::Files => &mut self.selected_files,
+                };
                 if len > 0 {
-                    let next = self.selected as i32 + delta;
-                    self.selected = next.clamp(0, len as i32 - 1) as usize;
+                    let next = *selected as i32 + delta;
+                    *selected = next.clamp(0, len as i32 - 1) as usize;
                 }
                 Task::none()
             }
-            Message::Activate => {
-                match self.actions().into_iter().nth(self.selected) {
-                    Some(Action::GoAlias(alias)) => launch::go_alias(&self.config, &alias),
-                    Some(Action::WebSearch(q)) if !q.trim().is_empty() => launch::web_search(&self.config, &q),
-                    Some(Action::AskAi(q)) if !q.trim().is_empty() => launch::ask_ai(&self.config, &q),
-                    Some(Action::LaunchApp(entry)) => launch::launch_app(&self.config, &entry.exec),
-                    Some(Action::OpenFile(path)) => launch::open_file(path),
-                    Some(Action::OpenSetting(m)) => launch::open_settings_tab(m.tab_arg),
-                    _ => return Task::none(),
+            Message::MoveColumn(delta) => {
+                let idx = Column::ALL.iter().position(|c| *c == self.column).unwrap_or(0);
+                // Skip a column that's disabled in Search settings (and so
+                // always empty) rather than landing on a dead end.
+                let mut next = idx as i32;
+                for _ in 0..Column::ALL.len() {
+                    next = (next + delta).rem_euclid(Column::ALL.len() as i32);
+                    let candidate = Column::ALL[next as usize];
+                    let enabled = match candidate {
+                        Column::Apps => true,
+                        Column::Settings => self.config.search_settings_enabled,
+                        Column::Files => self.config.search_files_enabled,
+                    };
+                    if enabled {
+                        self.column = candidate;
+                        break;
+                    }
                 }
-                iced::exit()
+                Task::none()
             }
+            Message::RowClicked(col, index) => self.activate(col, index),
+            Message::Activate => self.activate(self.column, self.column_selected(self.column)),
             Message::Close => iced::exit(),
         }
     }
 
+    fn column_selected(&self, col: Column) -> usize {
+        match col {
+            Column::Apps => self.selected_apps,
+            Column::Settings => self.selected_settings,
+            Column::Files => self.selected_files,
+        }
+    }
+
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        iced::event::listen_with(|event, _status, _id| {
+        let keyboard = iced::event::listen_with(|event, _status, _id| {
             if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::ArrowDown) => Some(Message::MoveSelection(1)),
                     keyboard::Key::Named(keyboard::key::Named::ArrowUp) => Some(Message::MoveSelection(-1)),
+                    keyboard::Key::Named(keyboard::key::Named::ArrowRight) => Some(Message::MoveColumn(1)),
+                    keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => Some(Message::MoveColumn(-1)),
                     keyboard::Key::Named(keyboard::key::Named::Escape) => Some(Message::Close),
                     _ => None,
                 }
             } else {
                 None
             }
-        })
+        });
+
+        if self.config.search_files_enabled && self.query.trim().len() >= 2 {
+            let file_search = iced::Subscription::run_with_id(self.query.clone(), file_search::stream(self.query.clone()))
+                .map(Message::FileFound);
+            iced::Subscription::batch([keyboard, file_search])
+        } else {
+            keyboard
+        }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -187,60 +271,130 @@ impl App {
                 selection: accent,
             });
 
-        let actions = self.actions();
-
-        // The list isn't in a scrollable — it's a fixed-height window — so
-        // without this, selecting past the last visible row just renders
-        // off the bottom edge instead of scrolling. Show a sliding window
-        // of rows around the selection instead, shifting up once the
-        // selection would fall past the last visible slot.
-        let scroll_offset = self.selected.saturating_sub(VISIBLE_ROWS.saturating_sub(1));
-        let visible = actions.iter().enumerate().skip(scroll_offset).take(VISIBLE_ROWS);
-
-        let rows: Vec<Element<Message>> = visible.map(|(i, action)| {
-            let is_selected = i == self.selected;
-            let (label, hint): (String, &str) = match action {
-                Action::GoAlias(alias) => (format!("Open go/{alias}"), "internal link"),
-                Action::WebSearch(q) => (format!("Web search: {q}"), "web search"),
-                Action::AskAi(q) => (
-                    format!("Ask {}: {q}", if self.config.default_ai_cli.is_empty() { "AI" } else { &self.config.default_ai_cli }),
-                    "ai",
-                ),
-                Action::LaunchApp(entry) => (entry.name.clone(), "app"),
-                Action::OpenFile(path) => (path.display().to_string(), "file"),
-                Action::OpenSetting(m) => (format!("Settings: {}", m.label), "settings"),
-            };
-
-            container(
+        // Plain fn items, not closures — every value that ends up in these
+        // rows is owned (String) or `&'static str`, so nothing here
+        // actually borrows from `self`; a closure can't express that
+        // (`Fn(...) -> Element<'_, ..>` ties the output lifetime to the
+        // closure's own elided input lifetimes), but a plain fn with an
+        // explicit `'static` return can.
+        fn row_widget(
+            col: Column, index: usize, label: String, hint: &'static str, is_selected: bool,
+            bar_bg: Color, text_color: Color, dim: Color, accent: Color, radius: f32,
+        ) -> Element<'static, Message> {
+            let content: Element<'static, Message> = container(
                 row![
-                    text(label).size(16).style(move |_| text::Style {
+                    text(label).size(15).style(move |_| text::Style {
                         color: Some(if is_selected { bar_bg } else { text_color }),
                     }),
                     iced::widget::horizontal_space(),
-                    text(hint).size(12).style(move |_| text::Style {
+                    text(hint).size(11).style(move |_| text::Style {
                         color: Some(if is_selected { bar_bg } else { dim }),
                     }),
                 ]
-                .align_y(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center),
             )
-            .padding([10, 14])
+            .padding([8, 10])
             .width(Length::Fill)
             .style(move |_| container::Style {
                 background: Some(Background::Color(if is_selected { accent } else { Color::TRANSPARENT })),
                 border: Border { radius: radius.into(), ..Default::default() },
                 ..Default::default()
             })
-            .into()
+            .into();
+            iced::widget::mouse_area(content).on_press(Message::RowClicked(col, index)).into()
+        }
+
+        let app_rows: Vec<Element<Message>> = self.app_actions().iter().enumerate().map(|(i, action)| {
+            let (label, hint): (String, &str) = match action {
+                AppAction::GoAlias(alias) => (format!("Open go/{alias}"), "internal link"),
+                AppAction::WebSearch(q) => (format!("Web search: {q}"), "web search"),
+                AppAction::AskAi(q) => (
+                    format!("Ask {}: {q}", if self.config.default_ai_cli.is_empty() { "AI" } else { &self.config.default_ai_cli }),
+                    "ai",
+                ),
+                AppAction::LaunchApp(entry) => (entry.name.clone(), "app"),
+            };
+            let is_selected = self.column == Column::Apps && i == self.selected_apps;
+            row_widget(Column::Apps, i, label, hint, is_selected, bar_bg, text_color, dim, accent, radius)
         }).collect();
 
-        let list = column(rows).spacing(2);
+        let settings_rows: Vec<Element<Message>> = self.settings_matches().iter().enumerate().map(|(i, m)| {
+            let is_selected = self.column == Column::Settings && i == self.selected_settings;
+            row_widget(Column::Settings, i, m.label.to_string(), "settings", is_selected, bar_bg, text_color, dim, accent, radius)
+        }).collect();
+
+        let file_rows: Vec<Element<Message>> = self.files.iter().enumerate().map(|(i, path)| {
+            let is_selected = self.column == Column::Files && i == self.selected_files;
+            row_widget(Column::Files, i, path.display().to_string(), "file", is_selected, bar_bg, text_color, dim, accent, radius)
+        }).collect();
+
+        fn column_header(label: &'static str, active: bool, accent: Color, dim: Color) -> Element<'static, Message> {
+            text(label)
+                .size(12)
+                .style(move |_| text::Style { color: Some(if active { accent } else { dim }) })
+                .into()
+        }
+
+        fn column_card(
+            header: Element<'static, Message>, rows: Vec<Element<'static, Message>>, empty_hint: &'static str,
+            sec_bg: Color, accent: Color, dim: Color, radius: f32,
+        ) -> Element<'static, Message> {
+            let body: Element<Message> = if rows.is_empty() {
+                text(empty_hint).size(12).style(move |_| text::Style { color: Some(dim) }).into()
+            } else {
+                scrollable(column(rows).spacing(2)).height(Length::Fill).into()
+            };
+            container(column![header, body].spacing(8).padding(10))
+                .width(Length::FillPortion(1))
+                .height(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(sec_bg)),
+                    border: Border { color: accent, width: 1.0, radius: radius.into() },
+                    ..Default::default()
+                })
+                .into()
+        }
+
+        let apps_empty = if self.query.trim().is_empty() { "Type to search apps…" } else { "No matches" };
+        let settings_empty = if !self.config.search_settings_enabled {
+            "Disabled in Search settings"
+        } else if self.query.trim().is_empty() {
+            "Type to search settings…"
+        } else {
+            "No matches"
+        };
+        let files_empty = if !self.config.search_files_enabled {
+            "Disabled in Search settings"
+        } else if self.query.trim().len() < 2 {
+            "Type 2+ characters…"
+        } else {
+            "Searching…"
+        };
+
+        let columns = row![
+            column_card(
+                column_header("APPS / WEB / AI", self.column == Column::Apps, accent, dim),
+                app_rows, apps_empty, sec_bg, accent, dim, radius,
+            ),
+            column_card(
+                column_header("SETTINGS", self.column == Column::Settings, accent, dim),
+                settings_rows, settings_empty, sec_bg, accent, dim, radius,
+            ),
+            column_card(
+                column_header("FILES", self.column == Column::Files, accent, dim),
+                file_rows, files_empty, sec_bg, accent, dim, radius,
+            ),
+        ]
+        .spacing(10)
+        .height(Length::Fill);
 
         container(
-            column![input, list]
+            column![input, columns]
                 .spacing(10)
                 .padding(16)
         )
-        .width(640)
+        .width(980)
+        .height(460)
         .style(move |_| container::Style {
             background: Some(Background::Color(bar_bg)),
             border: Border { color: accent, width: 2.0, radius: radius.into() },

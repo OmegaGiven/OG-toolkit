@@ -20,7 +20,7 @@ fn main() -> iced::Result {
             text_color: iced::Color::WHITE,
         })
         .window(iced::window::Settings {
-            size: iced::Size::new(640.0, 420.0),
+            size: iced::Size::new(980.0, 460.0),
             decorations: false,
             transparent: true,
             position: iced::window::Position::Centered,
