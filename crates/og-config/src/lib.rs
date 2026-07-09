@@ -192,7 +192,20 @@ pub struct Config {
     /// per-game Steam launch options.
     #[serde(default)]
     pub gamescope_steam: bool,
+    /// og-search: also show matching filenames from the filesystem, always
+    /// ranked after app/web/AI results — a toggle since a filesystem walk
+    /// is real I/O, not free, unlike everything else og-search already
+    /// searches.
+    #[serde(default = "default_true_bool")]
+    pub search_files_enabled: bool,
+    /// og-search: also show matching og-settings tabs (e.g. typing
+    /// "bluetooth" surfaces the Network tab), ranked after everything
+    /// else including file results.
+    #[serde(default = "default_true_bool")]
+    pub search_settings_enabled: bool,
 }
+
+fn default_true_bool() -> bool { true }
 
 fn default_border() -> i32 { 1 }
 fn default_bar_bg() -> String { "#1a1a2e".into() }
@@ -263,6 +276,8 @@ impl Default for Config {
             notif_fx_duration_ms: default_notif_fx_duration(),
             unfocused_opacity: default_unfocused_opacity(),
             gamescope_steam: false,
+            search_files_enabled: true,
+            search_settings_enabled: true,
         }
     }
 }
@@ -469,6 +484,22 @@ impl Default for BarConfig {
                         icon: "\u{ee0d}".to_string(), // fa-robot — no literal Claude glyph in this icon set
                         tooltip: "Open Claude CLI".to_string(),
                         command: "alacritty -e claude --dangerously-skip-permissions".to_string(),
+                    },
+                    enabled: true,
+                    size_override: None,
+                },
+                ModuleConfig {
+                    kind: ModuleKind::Launcher {
+                        icon: "\u{f002}".to_string(), // fa-search
+                        tooltip: "Search".to_string(),
+                        // ~/.local/bin, not bare "og-search" — sway's own
+                        // process environment doesn't have ~/.local/bin on
+                        // PATH (same class of bug fixed earlier for
+                        // og-power-apply), and every other launcher/click
+                        // command that targets a user-installed binary in
+                        // this file already uses the full path for exactly
+                        // that reason.
+                        command: "~/.local/bin/og-search".to_string(),
                     },
                     enabled: true,
                     size_override: None,
