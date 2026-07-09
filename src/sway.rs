@@ -622,6 +622,44 @@ pub fn run_power_apply() {
     let _ = Command::new(format!("{}/.local/bin/og-power-apply", home())).output();
 }
 
+const STEAM_SYSTEM_DESKTOP: &str = "/usr/share/applications/steam.desktop";
+
+fn steam_override_desktop_path() -> String {
+    format!("{}/.local/share/applications/steam.desktop", home())
+}
+
+/// Games (Proton titles especially) throttling/pausing their own
+/// simulation on losing window focus is what freezes them for anyone else
+/// connected when the host alt-tabs — the fix is stopping the game from
+/// ever *seeing* that focus loss, not fighting the game's own logic.
+/// Running Steam inside gamescope (a nested wlroots compositor) does
+/// exactly that: alt-tabbing the outer sway desktop changes focus out
+/// there, but nothing inside gamescope's own session ever loses focus,
+/// since from its perspective the game is still the only/foreground
+/// client. Applied via an XDG user-level override of steam.desktop
+/// (`~/.local/share/applications/` takes precedence over
+/// `/usr/share/applications/` for the same filename) instead of editing
+/// per-game Steam launch options, since it needs to be set once, not once
+/// per game in the library.
+pub fn apply_gamescope_steam(enabled: bool) {
+    let override_path = steam_override_desktop_path();
+    if !enabled {
+        let _ = std::fs::remove_file(&override_path);
+        return;
+    }
+    let Ok(original) = std::fs::read_to_string(STEAM_SYSTEM_DESKTOP) else {
+        return;
+    };
+    let wrapped = original.replace("Exec=/usr/bin/steam", "Exec=gamescope -f -- /usr/bin/steam");
+    if let Some(parent) = std::path::Path::new(&override_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&override_path, wrapped);
+    let _ = Command::new("update-desktop-database")
+        .arg(format!("{}/.local/share/applications", home()))
+        .output();
+}
+
 pub fn get_outputs() -> Vec<String> {
     let out = Command::new("swaymsg")
         .args(["-t", "get_outputs"])

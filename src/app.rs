@@ -63,6 +63,7 @@ pub enum Message {
 
     // Power
     MonitorSleepToggled(bool),
+    GamescopeSteamToggled(bool),
     MonitorSleepMinus,
     MonitorSleepPlus,
     SystemSleepToggled(bool),
@@ -518,6 +519,11 @@ impl App {
 
             // Power
             Message::MonitorSleepToggled(v) => { self.config.monitor_sleep.enabled = v; }
+            Message::GamescopeSteamToggled(v) => {
+                self.config.gamescope_steam = v;
+                let _ = self.config.save();
+                sway::apply_gamescope_steam(v);
+            }
             Message::MonitorSleepMinus => {
                 self.config.monitor_sleep.minutes = self.config.monitor_sleep.minutes.saturating_sub(1).max(1);
             }

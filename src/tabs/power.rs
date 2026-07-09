@@ -146,6 +146,27 @@ pub fn view<'a>(
     .style(card_style)
     .width(Length::Fill);
 
+    let gaming_card = container(
+        column![
+            section_title("Gaming", colors),
+            row![
+                label_text("Keep games running when tabbed away", colors),
+                iced::widget::horizontal_space(),
+                toggler(config.gamescope_steam)
+                    .on_toggle(Message::GamescopeSteamToggled)
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(12),
+            text("Runs Steam inside gamescope, a nested compositor — alt-tabbing your desktop then never touches the game's own window focus, so hosted multiplayer games (especially Proton titles) don't throttle or freeze for anyone else connected. Requires the gamescope package. Takes effect the next time you launch Steam.")
+                .size(11)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
+        ]
+        .spacing(16)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
     // ── Sway startup commands ──────────────────────────────────────────────
     let exec_rows: Vec<Element<Message>> = if startup_execs.is_empty() {
         vec![
@@ -271,7 +292,7 @@ pub fn view<'a>(
     .width(Length::Fill);
 
     scrollable(
-        column![monitor_card, system_card, lock_card, startup_execs_card, services_card, system_services_card]
+        column![monitor_card, system_card, lock_card, gaming_card, startup_execs_card, services_card, system_services_card]
             .spacing(16)
             .padding(20)
     )
