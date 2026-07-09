@@ -15,7 +15,6 @@ use crate::modules::launcher::Launcher;
 use crate::modules::memory::Memory;
 use crate::modules::network::Network;
 use crate::modules::pulseaudio::Pulseaudio;
-use crate::modules::taskbar::Taskbar;
 use crate::modules::tray::Tray;
 use crate::modules::workspaces::Workspaces;
 use crate::popup::{PopupKind, PopupState};
@@ -28,7 +27,6 @@ fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRu
         .filter_map(|m| -> Option<Box<dyn Module>> {
             match &m.kind {
                 ModuleKind::Workspaces => Some(Box::new(Workspaces::new(icon_rewrite.to_vec()))),
-                ModuleKind::Taskbar => Some(Box::new(Taskbar::new(icon_rewrite.to_vec()))),
                 ModuleKind::Clock { timezone } => Some(Box::new(Clock::new(timezone.clone(), hour12))),
                 ModuleKind::Launcher { icon, command, .. } => {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))

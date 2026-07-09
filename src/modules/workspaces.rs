@@ -24,6 +24,15 @@ struct RawWorkspace {
     focused: bool,
 }
 
+/// One window's resolved icon, paired with its con_id so clicking that
+/// specific icon can focus that specific window — not just switch to
+/// whichever workspace it happens to be on.
+#[derive(Debug, Clone)]
+pub struct WindowIcon {
+    pub con_id: i64,
+    pub icon: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceInfo {
     pub num: i32,
@@ -31,7 +40,7 @@ pub struct WorkspaceInfo {
     pub focused: bool,
     /// Already-resolved icon per window on this workspace (rewrite applied
     /// at fetch time so `view()` doesn't need the rule table at all).
-    pub window_icons: Vec<String>,
+    pub windows: Vec<WindowIcon>,
 }
 
 fn resolve_icon(app_id: Option<&str>, class: Option<&str>, rules: &[IconRewriteRule]) -> String {
@@ -51,13 +60,13 @@ fn resolve_icon(app_id: Option<&str>, class: Option<&str>, rules: &[IconRewriteR
 }
 
 /// Walks sway's `get_tree` output collecting, per top-level workspace node,
-/// the resolved icon for every window nested anywhere under it (splits/tabs
-/// nest windows arbitrarily deep, so this recurses rather than assuming a
-/// flat child list).
-fn collect_window_icons(tree: &serde_json::Value, rules: &[IconRewriteRule]) -> std::collections::HashMap<String, Vec<String>> {
+/// the resolved icon (and con_id, for per-window focus-on-click) for every
+/// window nested anywhere under it (splits/tabs nest windows arbitrarily
+/// deep, so this recurses rather than assuming a flat child list).
+fn collect_windows(tree: &serde_json::Value, rules: &[IconRewriteRule]) -> std::collections::HashMap<String, Vec<WindowIcon>> {
     let mut out = std::collections::HashMap::new();
 
-    fn walk(node: &serde_json::Value, current_ws: Option<&str>, rules: &[IconRewriteRule], out: &mut std::collections::HashMap<String, Vec<String>>) {
+    fn walk(node: &serde_json::Value, current_ws: Option<&str>, rules: &[IconRewriteRule], out: &mut std::collections::HashMap<String, Vec<WindowIcon>>) {
         let node_type = node.get("type").and_then(|v| v.as_str());
         let ws_name = if node_type == Some("workspace") {
             node.get("name").and_then(|v| v.as_str())
@@ -67,10 +76,12 @@ fn collect_window_icons(tree: &serde_json::Value, rules: &[IconRewriteRule]) -> 
 
         let app_id = node.get("app_id").and_then(|v| v.as_str());
         let class = node.get("window_properties").and_then(|wp| wp.get("class")).and_then(|v| v.as_str());
-        if (app_id.is_some() || class.is_some()) && ws_name.is_some() {
-            out.entry(ws_name.unwrap().to_string())
-                .or_default()
-                .push(resolve_icon(app_id, class, rules));
+        if let (Some(con_id), Some(ws_name)) = (node.get("id").and_then(|v| v.as_i64()), ws_name) {
+            if app_id.is_some() || class.is_some() {
+                out.entry(ws_name.to_string())
+                    .or_default()
+                    .push(WindowIcon { con_id, icon: resolve_icon(app_id, class, rules) });
+            }
         }
 
         for key in ["nodes", "floating_nodes"] {
@@ -96,14 +107,14 @@ async fn fetch_workspaces(rules: &[IconRewriteRule]) -> Vec<WorkspaceInfo> {
     let tree_out = Command::new("swaymsg").args(["-t", "get_tree"]).output().await;
     let windows_by_ws = match tree_out {
         Ok(out) => serde_json::from_slice::<serde_json::Value>(&out.stdout)
-            .map(|tree| collect_window_icons(&tree, rules))
+            .map(|tree| collect_windows(&tree, rules))
             .unwrap_or_default(),
         Err(_) => std::collections::HashMap::new(),
     };
 
     raw.into_iter()
         .map(|w| WorkspaceInfo {
-            window_icons: windows_by_ws.get(&w.name).cloned().unwrap_or_default(),
+            windows: windows_by_ws.get(&w.name).cloned().unwrap_or_default(),
             num: w.num,
             name: w.name,
             focused: w.focused,
@@ -128,34 +139,15 @@ impl Module for Workspaces {
     }
 
     fn view(&self, colors: AppColors, size: u32, orientation: Orientation) -> Element<'_, Message> {
-        let buttons: Vec<Element<Message>> = self
+        let groups: Vec<Element<Message>> = self
             .workspaces
             .iter()
             .map(|ws| {
                 let bg = if ws.focused { colors.accent } else { Color::TRANSPARENT };
                 let fg = if ws.focused { colors.bar_bg } else { colors.text };
-                // Number stays visible always (own widget, default font);
-                // icons are each their own Text widget too rather than one
-                // string joined with a literal space — Symbols Nerd Font
-                // has no space glyph, so a joined string would tofu on
-                // every separator between icons.
-                let mut parts: Vec<Element<Message>> =
-                    vec![text(ws.name.clone()).size(14).style(move |_| text::Style { color: Some(fg) }).into()];
-                parts.extend(ws.window_icons.iter().map(|icon| {
-                    // Icon-rewrite entries are user-editable and not all
-                    // nerd-font glyphs — e.g. "alacritty" maps to plain
-                    // "./" — so this can't force nerd_font() blindly like
-                    // the fixed bar-chrome icons do (settings gear, power,
-                    // etc). Same per-string heuristic as launcher icons.
-                    text(icon.clone())
-                        .size(14)
-                        .font(icon_font::font_for(icon))
-                        .style(move |_| text::Style { color: Some(fg) })
-                        .into()
-                }));
-                let content: Element<Message> = row(parts).spacing(3).into();
-                button(
-                    container(content)
+
+                let number_btn = button(
+                    container(text(ws.name.clone()).size(14).style(move |_| text::Style { color: Some(fg) }))
                         .width(size as u16)
                         .height(size as u16)
                         .center_x(Length::Fill)
@@ -168,14 +160,56 @@ impl Module for Workspaces {
                     text_color: fg,
                     ..Default::default()
                 })
-                .on_press(Message::FocusWorkspace(ws.name.clone()))
-                .into()
+                .on_press(Message::FocusWorkspace(ws.name.clone()));
+
+                // Each window is its own clickable button (FocusWindow,
+                // not FocusWorkspace) — clicking a specific app's icon
+                // jumps straight to that window, not just its workspace.
+                // Icon-rewrite entries are user-editable and not all
+                // nerd-font glyphs (e.g. "alacritty" maps to plain "./"),
+                // so font_for() picks per-icon rather than forcing one.
+                let window_btns = ws.windows.iter().map(|w| {
+                    let con_id = w.con_id;
+                    button(
+                        container(
+                            text(w.icon.clone())
+                                .size(14)
+                                .font(icon_font::font_for(&w.icon))
+                                .style(move |_| text::Style { color: Some(colors.text) }),
+                        )
+                        .width(size as u16)
+                        .height(size as u16)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                    )
+                    .padding(0)
+                    .style(move |_, status| button::Style {
+                        background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                            colors.header_btn_bg
+                        } else {
+                            Color::TRANSPARENT
+                        })),
+                        border: Border { radius: colors.radius.into(), ..Default::default() },
+                        text_color: colors.text,
+                        ..Default::default()
+                    })
+                    .on_press(Message::FocusWindow(con_id))
+                    .into()
+                });
+
+                let mut parts: Vec<Element<Message>> = vec![number_btn.into()];
+                parts.extend(window_btns);
+
+                match orientation {
+                    Orientation::Horizontal => row(parts).spacing(1).into(),
+                    Orientation::Vertical => column(parts).spacing(1).into(),
+                }
             })
             .collect();
 
         match orientation {
-            Orientation::Horizontal => row(buttons).spacing(2).into(),
-            Orientation::Vertical => column(buttons).spacing(2).into(),
+            Orientation::Horizontal => row(groups).spacing(4).into(),
+            Orientation::Vertical => column(groups).spacing(4).into(),
         }
     }
 

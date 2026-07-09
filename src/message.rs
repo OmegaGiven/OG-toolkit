@@ -1,7 +1,6 @@
 use iced_layershell::to_layer_message;
 use og_config::{Edge, ModuleKind};
 
-use crate::modules::taskbar::TaskbarWindow;
 use crate::modules::tray::TrayItem;
 use crate::modules::workspaces::WorkspaceInfo;
 use crate::power::PowerAction;
@@ -12,7 +11,6 @@ use crate::settings::Section;
 pub enum Message {
     WorkspacesUpdated(Vec<WorkspaceInfo>),
     FocusWorkspace(String),
-    TaskbarUpdated(Vec<TaskbarWindow>),
     FocusWindow(i64),
     TrayUpdated(Vec<TrayItem>),
     TrayActivate(String),
