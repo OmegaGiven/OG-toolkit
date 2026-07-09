@@ -319,11 +319,6 @@ pub enum ModuleKind {
     Launcher { icon: String, tooltip: String, command: String },
     Settings,
     Power,
-    /// Flat list of every open window (not grouped by workspace like
-    /// Workspaces is) — click one to jump straight to it regardless of
-    /// which workspace it's on. Icon resolved through the same
-    /// `icon_rewrite` table Workspaces already uses.
-    Taskbar,
 }
 
 impl ModuleKind {
@@ -343,7 +338,6 @@ impl ModuleKind {
             ModuleKind::Pulseaudio,
             ModuleKind::Settings,
             ModuleKind::Power,
-            ModuleKind::Taskbar,
         ]
     }
 }
