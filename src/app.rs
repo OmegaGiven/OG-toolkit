@@ -11,6 +11,7 @@ use iced::{
 use crate::audio::{self, AudioSnapshot, AudioTarget};
 use crate::config::Config;
 use crate::devices;
+use crate::galias;
 use crate::printing;
 use crate::sway::{self, MonitorInfo};
 use crate::vpn;
@@ -122,6 +123,13 @@ pub enum Message {
     PrintingRemove(String),
     PrintingTestPage(String),
     PrintingAddDriverless(String),
+
+    // Web shortcuts (go/alias) section of the Network tab
+    GaliasLoaded(Vec<crate::galias::Alias>),
+    GaliasKeyChanged(String),
+    GaliasUrlChanged(String),
+    GaliasAddSubmit,
+    GaliasRemove(String),
 
     // Updates tab
     UpdatesStatusLoaded(sway::UpdateStatus),
@@ -340,6 +348,11 @@ pub struct App {
     pub printers: Vec<crate::printing::Printer>,
     pub detected_printers: Vec<crate::printing::DetectedDevice>,
 
+    // Web shortcuts (go/alias)
+    pub galias_aliases: Vec<crate::galias::Alias>,
+    pub galias_key: String,
+    pub galias_url: String,
+
     // Updates tab
     pub update_status: sway::UpdateStatus,
     pub updates_checking: bool,
@@ -495,6 +508,10 @@ impl App {
                 printers: Vec::new(),
                 detected_printers: Vec::new(),
 
+                galias_aliases: Vec::new(),
+                galias_key: String::new(),
+                galias_url: String::new(),
+
                 audio_subtab: AudioSubTab::Output,
                 audio_snapshot: AudioSnapshot::default(),
 
@@ -502,7 +519,7 @@ impl App {
                 input_devices: Vec::new(),
                 pci_devices: Vec::new(),
             },
-            if initial_tab_is_network { Task::batch([load_network_data(), load_vpn_data()]) } else { Task::none() },
+            if initial_tab_is_network { Task::batch([load_network_data(), load_vpn_data(), load_galias_data()]) } else { Task::none() },
         )
     }
 
@@ -546,7 +563,7 @@ impl App {
                     );
                 }
                 if self.current_tab == Tab::Network {
-                    return Task::batch([load_network_data(), load_vpn_data()]);
+                    return Task::batch([load_network_data(), load_vpn_data(), load_galias_data()]);
                 }
                 if self.current_tab == Tab::Updates {
                     return load_update_status();
@@ -866,6 +883,23 @@ impl App {
             Message::VpnAppRouteToggled(id, name, routed) => {
                 vpn::set_app_routed(&id, &name, routed);
                 self.split_apps = vpn::list_split_apps();
+            }
+
+            // Web shortcuts (go/alias)
+            Message::GaliasLoaded(aliases) => { self.galias_aliases = aliases; }
+            Message::GaliasKeyChanged(k) => { self.galias_key = k; }
+            Message::GaliasUrlChanged(u) => { self.galias_url = u; }
+            Message::GaliasAddSubmit => {
+                if !self.galias_key.trim().is_empty() && !self.galias_url.trim().is_empty() {
+                    galias::add_alias(self.galias_key.trim(), self.galias_url.trim());
+                    self.galias_key.clear();
+                    self.galias_url.clear();
+                    self.galias_aliases = galias::list_aliases();
+                }
+            }
+            Message::GaliasRemove(key) => {
+                galias::remove_alias(&key);
+                self.galias_aliases = galias::list_aliases();
             }
 
             // Printing tab
@@ -2078,6 +2112,9 @@ impl App {
                 self.vpn_add_open,
                 &self.vpn_add_name,
                 &self.vpn_add_conf_text,
+                &self.galias_aliases,
+                &self.galias_key,
+                &self.galias_url,
             ),
             Tab::Updates => tabs::updater::view(
                 colors,
@@ -2586,6 +2623,13 @@ fn load_vpn_data() -> Task<Message> {
             ))
         },
         |(ts, vs, apps)| Message::VpnDataLoaded(ts, vs, apps),
+    )
+}
+
+fn load_galias_data() -> Task<Message> {
+    Task::perform(
+        async { tokio::task::spawn_blocking(galias::list_aliases).await.unwrap_or_default() },
+        Message::GaliasLoaded,
     )
 }
 

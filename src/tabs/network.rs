@@ -3,6 +3,7 @@ use iced::{Background, Border, Color, Element, Length};
 
 use crate::app::{AppColors, Message};
 use crate::sway::{BluetoothAdapter, BluetoothDevice, EthernetInterface, WifiNetwork, WifiStatus};
+use crate::galias::Alias;
 use crate::vpn::{SplitApp, TailscaleStatus, VpnState};
 
 pub fn view<'a>(
@@ -19,6 +20,9 @@ pub fn view<'a>(
     vpn_add_open: bool,
     vpn_add_name: &'a str,
     vpn_add_conf_text: &'a str,
+    galias_aliases: &'a [Alias],
+    galias_key: &'a str,
+    galias_url: &'a str,
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
@@ -454,8 +458,52 @@ pub fn view<'a>(
     .style(card_style)
     .width(Length::Fill);
 
+    // ── Web shortcuts (go/alias) ─────────────────────────────────────────
+    let galias_rows: Vec<Element<Message>> = if galias_aliases.is_empty() {
+        vec![dim("No shortcuts yet.".to_string())]
+    } else {
+        galias_aliases.iter().map(|a| {
+            let key = a.key.clone();
+            row![
+                column![
+                    label(format!("go/{}", a.key)),
+                    dim(a.url.clone()),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                action_btn("Remove", Message::GaliasRemove(key), ActionKind::Danger),
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(10)
+            .into()
+        }).collect()
+    };
+
+    let galias_card = container(
+        column![
+            title("Web shortcuts (go/alias)"),
+            dim("Type go/<name> in a browser to jump straight to a saved URL.".to_string()),
+            column![
+                iced::widget::text_input("name (e.g. radarr)", galias_key)
+                    .on_input(Message::GaliasKeyChanged)
+                    .padding(8),
+                iced::widget::text_input("destination URL", galias_url)
+                    .on_input(Message::GaliasUrlChanged)
+                    .on_submit(Message::GaliasAddSubmit)
+                    .padding(8),
+                action_btn("Add shortcut", Message::GaliasAddSubmit, ActionKind::Accent),
+            ]
+            .spacing(8),
+            column(galias_rows).spacing(10),
+        ]
+        .spacing(12)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
     scrollable(
-        column![wifi_card, eth_card, bt_card, ts_card, vpn_card, app_card]
+        column![wifi_card, eth_card, bt_card, ts_card, vpn_card, app_card, galias_card]
             .spacing(16)
             .padding(20)
     )
