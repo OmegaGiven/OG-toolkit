@@ -6,7 +6,7 @@
 //! writes the config and respawns the bar to pick up the new anchor/size,
 //! matching the plan's own carve-out for changes that need a full relayout.
 
-use iced::widget::{button, checkbox, column, container, row, slider, text, text_input};
+use iced::widget::{button, checkbox, column, container, mouse_area, row, slider, text, text_input};
 use iced::{Background, Border, Color, Element, Length};
 
 use og_config::{Edge, ModuleKind};
@@ -28,25 +28,29 @@ pub struct SettingsButton;
 impl Module for SettingsButton {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
-        button(
-            container(text("\u{eaf8}").size(16).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }))
-                .width(size as u16)
-                .height(size as u16)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill),
+        // Left click: the full og-settings Bar tab (same plain-launch
+        // pattern the network/bluetooth buttons already use via
+        // Message::Launch — not adding a focus-or-launch shell fallback
+        // here, since Launch's own setsid wrapping only applies to the
+        // first command in a string and a `cmd1 || cmd2 &` compound
+        // wouldn't setsid the fallback branch correctly). Right click:
+        // the quick on-the-spot popout, unchanged.
+        mouse_area(
+            container(
+                container(text("\u{eaf8}").size(16).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }))
+                    .width(size as u16)
+                    .height(size as u16)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color::TRANSPARENT)),
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                ..Default::default()
+            }),
         )
-        .padding(0)
-        .style(move |_, status| button::Style {
-            background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
-                colors.header_btn_bg
-            } else {
-                Color::TRANSPARENT
-            })),
-            border: Border { radius: colors.radius.into(), ..Default::default() },
-            text_color: fg,
-            ..Default::default()
-        })
-        .on_press(Message::OpenSettingsPopup)
+        .on_press(Message::Launch("~/.local/bin/og-settings --tab bar".to_string()))
+        .on_right_press(Message::OpenSettingsPopup)
         .into()
     }
 }
