@@ -1816,16 +1816,23 @@ impl App {
                 .padding([10, 16])
                 .width(Length::Fill);
 
-                let indicator = container(iced::widget::Space::new(2u16, Length::Fill))
+                // Fixed height, not Length::Fill — a Fill-height child
+                // here propagates up through the row into the sidebar's
+                // scrollable, which panics ("scrollable content must not
+                // fill its vertical scrolling axis"). That panic was
+                // silently blanking the whole sidebar instead of crashing
+                // the app, which is why no tabs were showing at all.
+                const ROW_HEIGHT: f32 = 40.0;
+                let indicator = container(iced::widget::Space::new(2u16, Length::Fixed(ROW_HEIGHT)))
                     .style(move |_| container::Style {
                         background: Some(Background::Color(
                             if active { c.accent } else { Color::TRANSPARENT }
                         )),
                         ..Default::default()
                     })
-                    .height(Length::Fill);
+                    .height(Length::Fixed(ROW_HEIGHT));
 
-                row![indicator, btn].align_y(iced::Alignment::Center).into()
+                row![indicator, btn].height(Length::Fixed(ROW_HEIGHT)).align_y(iced::Alignment::Center).into()
             })
             .collect();
 
