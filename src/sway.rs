@@ -614,7 +614,12 @@ pub fn set_border_width(px: i32) {
 }
 
 pub fn run_power_apply() {
-    let _ = Command::new("og-power-apply").output();
+    // Bare command name relies on PATH — sway's own process environment
+    // (unlike an interactive shell) doesn't include ~/.local/bin, so this
+    // silently failed to spawn every time: toggling monitor/system sleep
+    // off in the GUI never actually reached the running swayidle, which
+    // kept enforcing whatever timeout was active when it was last spawned.
+    let _ = Command::new(format!("{}/.local/bin/og-power-apply", home())).output();
 }
 
 pub fn get_outputs() -> Vec<String> {
