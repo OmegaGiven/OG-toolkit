@@ -7,6 +7,7 @@ mod pty;
 mod sway;
 mod tabs;
 mod terminal_theme;
+mod vpn;
 
 use app::App;
 

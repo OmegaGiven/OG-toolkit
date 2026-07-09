@@ -1,8 +1,9 @@
-use iced::widget::{button, column, container, row, scrollable, text, toggler};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, toggler};
 use iced::{Background, Border, Color, Element, Length};
 
 use crate::app::{AppColors, Message};
 use crate::sway::{BluetoothAdapter, BluetoothDevice, EthernetInterface, WifiNetwork, WifiStatus};
+use crate::vpn::{SplitApp, TailscaleStatus, VpnState};
 
 pub fn view<'a>(
     colors: AppColors,
@@ -12,6 +13,12 @@ pub fn view<'a>(
     bluetooth_adapter: &'a BluetoothAdapter,
     bluetooth_devices: &'a [BluetoothDevice],
     scanning: bool,
+    tailscale: &'a TailscaleStatus,
+    vpn_state: &'a VpnState,
+    split_apps: &'a [SplitApp],
+    vpn_add_open: bool,
+    vpn_add_name: &'a str,
+    vpn_add_conf_text: &'a str,
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
@@ -274,8 +281,181 @@ pub fn view<'a>(
     .style(card_style)
     .width(Length::Fill);
 
+    // ── Tailscale (private VPN) ─────────────────────────────────────────
+    let mut ts_rows: Vec<Element<Message>> = Vec::new();
+    if !tailscale.installed {
+        ts_rows.push(dim("tailscale not found on this system.".to_string()));
+    } else if !tailscale.running {
+        ts_rows.push(dim("Tailscale is installed but not running (`tailscale up`).".to_string()));
+    } else {
+        ts_rows.push(
+            row![
+                label(tailscale.self_hostname.clone()),
+                iced::widget::horizontal_space(),
+                dim(tailscale.self_ip.clone().unwrap_or_default()),
+            ]
+            .align_y(iced::Alignment::Center)
+            .into()
+        );
+        ts_rows.push(title("Exit node"));
+        let none_active = !tailscale.peers.iter().any(|p| p.is_exit_node);
+        ts_rows.push(
+            row![
+                label("None (direct connection)".to_string()),
+                iced::widget::horizontal_space(),
+                if none_active {
+                    dim("Active".to_string())
+                } else {
+                    action_btn("Use this", Message::VpnExitNodeSelected(None), ActionKind::Accent)
+                },
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(10)
+            .into()
+        );
+        if tailscale.peers.is_empty() {
+            ts_rows.push(dim("No peers on this tailnet advertise as an exit node.".to_string()));
+        }
+        for p in tailscale.peers.iter() {
+            let hostname = p.hostname.clone();
+            ts_rows.push(
+                row![
+                    column![
+                        label(p.hostname.clone()),
+                        dim(format!("{} · {}", p.ip, if p.online { "online" } else { "offline" })),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    if p.is_exit_node {
+                        dim("Active".to_string())
+                    } else {
+                        action_btn("Use this", Message::VpnExitNodeSelected(Some(hostname)), ActionKind::Accent)
+                    },
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(10)
+                .into()
+            );
+        }
+    }
+    let ts_card = container(
+        column(std::iter::once(title("Tailscale (private VPN)")).chain(ts_rows).collect::<Vec<_>>())
+            .spacing(12)
+            .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
+    // ── Public VPN (WireGuard) ───────────────────────────────────────────
+    let mut vpn_rows: Vec<Element<Message>> = Vec::new();
+    if !vpn_state.helper_installed {
+        vpn_rows.push(dim("og-vpn-apply helper not installed yet — see scripts/og-vpn-sudoers.".to_string()));
+    } else if vpn_state.configs.is_empty() {
+        vpn_rows.push(dim("No WireGuard configs added yet.".to_string()));
+    } else {
+        for c in vpn_state.configs.iter() {
+            let is_whole = c.whole_active;
+            let is_partial = vpn_state.netns_active && vpn_state.netns_config.as_deref() == Some(c.name.as_str());
+            let whole_name = c.name.clone();
+            let partial_name = c.name.clone();
+            let del_name = c.name.clone();
+            vpn_rows.push(
+                column![
+                    row![
+                        label(c.name.clone()),
+                        iced::widget::horizontal_space(),
+                        action_btn("Delete", Message::VpnDeleteConfig(del_name), ActionKind::Danger),
+                    ]
+                    .align_y(iced::Alignment::Center)
+                    .spacing(10),
+                    row![
+                        action_btn(
+                            if !is_whole && !is_partial { "● Off" } else { "Off" },
+                            Message::VpnSetOff,
+                            if !is_whole && !is_partial { ActionKind::Accent } else { ActionKind::Plain },
+                        ),
+                        action_btn(
+                            if is_whole { "● Whole system" } else { "Whole system" },
+                            Message::VpnSetWhole(whole_name),
+                            if is_whole { ActionKind::Accent } else { ActionKind::Plain },
+                        ),
+                        action_btn(
+                            if is_partial { "● Partial (per-app)" } else { "Partial (per-app)" },
+                            Message::VpnSetPartial(partial_name),
+                            if is_partial { ActionKind::Accent } else { ActionKind::Plain },
+                        ),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(6)
+                .into()
+            );
+        }
+    }
+
+    let add_toggle_btn = button(text(if vpn_add_open { "Cancel" } else { "Add WireGuard config" }).size(12).style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+        .style(btn_style)
+        .on_press(Message::VpnAddOpenToggled(!vpn_add_open))
+        .padding([6, 14]);
+
+    let mut vpn_children: Vec<Element<Message>> = vec![
+        row![title("Public VPN (WireGuard)"), iced::widget::horizontal_space(), add_toggle_btn]
+            .align_y(iced::Alignment::Center)
+            .spacing(12)
+            .into(),
+    ];
+    if vpn_add_open {
+        vpn_children.push(
+            column![
+                text_input("Name (e.g. proton-us)", vpn_add_name)
+                    .on_input(Message::VpnAddNameChanged)
+                    .padding(8),
+                text_input("Paste the .conf contents here", vpn_add_conf_text)
+                    .on_input(Message::VpnAddConfTextChanged)
+                    .padding(8),
+                action_btn("Save config", Message::VpnAddConfigSubmit, ActionKind::Accent),
+            ]
+            .spacing(8)
+            .into()
+        );
+    }
+    vpn_children.extend(vpn_rows);
+    let vpn_card = container(column(vpn_children).spacing(12).padding(20))
+        .style(card_style)
+        .width(Length::Fill);
+
+    // ── Per-app split-tunnel list (only meaningful once a config is in Partial mode) ──
+    let mut app_rows: Vec<Element<Message>> = Vec::new();
+    if !vpn_state.netns_active {
+        app_rows.push(dim("Put a config in Partial mode above to route individual apps through it.".to_string()));
+    } else if split_apps.is_empty() {
+        app_rows.push(dim("No apps found in /usr/share/applications.".to_string()));
+    } else {
+        for a in split_apps.iter() {
+            let id = a.id.clone();
+            let name = a.name.clone();
+            app_rows.push(
+                row![
+                    label(a.name.clone()),
+                    iced::widget::horizontal_space(),
+                    toggler(a.routed).on_toggle(move |v| Message::VpnAppRouteToggled(id.clone(), name.clone(), v)),
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(12)
+                .into()
+            );
+        }
+    }
+    let app_card = container(
+        column(std::iter::once(title("Route through VPN")).chain(app_rows).collect::<Vec<_>>())
+            .spacing(10)
+            .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
     scrollable(
-        column![wifi_card, eth_card, bt_card]
+        column![wifi_card, eth_card, bt_card, ts_card, vpn_card, app_card]
             .spacing(16)
             .padding(20)
     )

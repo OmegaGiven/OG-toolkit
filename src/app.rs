@@ -12,6 +12,7 @@ use crate::audio::{self, AudioSnapshot, AudioTarget};
 use crate::config::Config;
 use crate::devices;
 use crate::sway::{self, MonitorInfo};
+use crate::vpn;
 use crate::tabs::{self, Tab};
 use crate::tabs::audio::AudioSubTab;
 use crate::tabs::bar::BarSection;
@@ -99,6 +100,19 @@ pub enum Message {
     BluetoothDisconnect(String),
     BluetoothPair(String),
     BluetoothRemove(String),
+
+    // VPN section (part of the Network tab)
+    VpnDataLoaded(crate::vpn::TailscaleStatus, crate::vpn::VpnState, Vec<crate::vpn::SplitApp>),
+    VpnExitNodeSelected(Option<String>),
+    VpnAddOpenToggled(bool),
+    VpnAddNameChanged(String),
+    VpnAddConfTextChanged(String),
+    VpnAddConfigSubmit,
+    VpnDeleteConfig(String),
+    VpnSetOff,
+    VpnSetWhole(String),
+    VpnSetPartial(String),
+    VpnAppRouteToggled(String, String, bool),
 
     // Updates tab
     UpdatesStatusLoaded(sway::UpdateStatus),
@@ -304,6 +318,14 @@ pub struct App {
     pub bluetooth_devices: Vec<sway::BluetoothDevice>,
     pub network_scanning: bool,
 
+    // VPN section
+    pub tailscale_status: crate::vpn::TailscaleStatus,
+    pub vpn_state: crate::vpn::VpnState,
+    pub split_apps: Vec<crate::vpn::SplitApp>,
+    pub vpn_add_open: bool,
+    pub vpn_add_name: String,
+    pub vpn_add_conf_text: String,
+
     // Updates tab
     pub update_status: sway::UpdateStatus,
     pub updates_checking: bool,
@@ -447,6 +469,13 @@ impl App {
                 search_open: false,
                 search_query: String::new(),
 
+                tailscale_status: crate::vpn::TailscaleStatus::default(),
+                vpn_state: crate::vpn::VpnState::default(),
+                split_apps: Vec::new(),
+                vpn_add_open: false,
+                vpn_add_name: String::new(),
+                vpn_add_conf_text: String::new(),
+
                 audio_subtab: AudioSubTab::Output,
                 audio_snapshot: AudioSnapshot::default(),
 
@@ -454,7 +483,7 @@ impl App {
                 input_devices: Vec::new(),
                 pci_devices: Vec::new(),
             },
-            if initial_tab_is_network { load_network_data() } else { Task::none() },
+            if initial_tab_is_network { Task::batch([load_network_data(), load_vpn_data()]) } else { Task::none() },
         )
     }
 
@@ -498,7 +527,7 @@ impl App {
                     );
                 }
                 if self.current_tab == Tab::Network {
-                    return load_network_data();
+                    return Task::batch([load_network_data(), load_vpn_data()]);
                 }
                 if self.current_tab == Tab::Updates {
                     return load_update_status();
@@ -740,6 +769,69 @@ impl App {
             Message::BluetoothRemove(mac) => {
                 sway::bluetooth_remove(&mac);
                 self.sync_reload_network();
+            }
+
+            // VPN section
+            Message::VpnDataLoaded(ts, vs, apps) => {
+                self.tailscale_status = ts;
+                self.vpn_state = vs;
+                self.split_apps = apps;
+            }
+            Message::VpnExitNodeSelected(hostname) => {
+                vpn::tailscale_set_exit_node(hostname.as_deref());
+                self.tailscale_status = vpn::tailscale_status();
+            }
+            Message::VpnAddOpenToggled(open) => {
+                self.vpn_add_open = open;
+                if !open {
+                    self.vpn_add_name.clear();
+                    self.vpn_add_conf_text.clear();
+                }
+            }
+            Message::VpnAddNameChanged(n) => { self.vpn_add_name = n; }
+            Message::VpnAddConfTextChanged(t) => { self.vpn_add_conf_text = t; }
+            Message::VpnAddConfigSubmit => {
+                if !self.vpn_add_name.trim().is_empty() && !self.vpn_add_conf_text.trim().is_empty() {
+                    vpn::add_config(self.vpn_add_name.trim(), &self.vpn_add_conf_text);
+                    self.vpn_add_open = false;
+                    self.vpn_add_name.clear();
+                    self.vpn_add_conf_text.clear();
+                    self.vpn_state = vpn::vpn_state();
+                }
+            }
+            Message::VpnDeleteConfig(name) => {
+                vpn::delete_config(&name);
+                self.vpn_state = vpn::vpn_state();
+            }
+            Message::VpnSetOff => {
+                if self.vpn_state.netns_active {
+                    vpn::netns_down();
+                }
+                for c in self.vpn_state.configs.clone().iter().filter(|c| c.whole_active) {
+                    vpn::whole_down(&c.name);
+                }
+                self.vpn_state = vpn::vpn_state();
+            }
+            Message::VpnSetWhole(name) => {
+                if self.vpn_state.netns_active {
+                    vpn::netns_down();
+                }
+                for c in self.vpn_state.configs.clone().iter().filter(|c| c.whole_active && c.name != name) {
+                    vpn::whole_down(&c.name);
+                }
+                vpn::whole_up(&name);
+                self.vpn_state = vpn::vpn_state();
+            }
+            Message::VpnSetPartial(name) => {
+                for c in self.vpn_state.configs.clone().iter().filter(|c| c.whole_active) {
+                    vpn::whole_down(&c.name);
+                }
+                vpn::netns_up(&name);
+                self.vpn_state = vpn::vpn_state();
+            }
+            Message::VpnAppRouteToggled(id, name, routed) => {
+                vpn::set_app_routed(&id, &name, routed);
+                self.split_apps = vpn::list_split_apps();
             }
 
             // Updates tab
@@ -1918,6 +2010,12 @@ impl App {
                 &self.bluetooth_adapter,
                 &self.bluetooth_devices,
                 self.network_scanning,
+                &self.tailscale_status,
+                &self.vpn_state,
+                &self.split_apps,
+                self.vpn_add_open,
+                &self.vpn_add_name,
+                &self.vpn_add_conf_text,
             ),
             Tab::Updates => tabs::updater::view(
                 colors,
@@ -2408,6 +2506,23 @@ fn load_network_data() -> Task<Message> {
         |(wifi, networks, eth, bt_adapter, bt_devices)| {
             Message::NetworkDataLoaded(wifi, networks, eth, bt_adapter, bt_devices)
         },
+    )
+}
+
+fn load_vpn_data() -> Task<Message> {
+    Task::perform(
+        async {
+            tokio::task::spawn_blocking(|| {
+                (vpn::tailscale_status(), vpn::vpn_state(), vpn::list_split_apps())
+            })
+            .await
+            .unwrap_or_else(|_| (
+                vpn::TailscaleStatus::default(),
+                vpn::VpnState::default(),
+                Vec::new(),
+            ))
+        },
+        |(ts, vs, apps)| Message::VpnDataLoaded(ts, vs, apps),
     )
 }
 
