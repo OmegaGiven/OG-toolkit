@@ -22,9 +22,11 @@ og-settings' Audio tab (but see note below).
 
 `intel-ucode` isn't on this AMD box but must ship in a general ISO — same
 logic as keeping all GPU drivers (section "Hardware breadth" below).
-`base-devel` is small and keeps the door open for `makepkg`/AUR even
-though the OG-suite itself ships as prebuilt packages (2b below) —
-worth it for a "hacker-friendly" default; cut it if the goal is minimal.
+`base-devel` kept (decided) — needed for `makepkg`/AUR to actually work
+via `yay`, which is already in base; without it `yay -S` fails on
+anything not pre-built. Real cost is the compiler toolchain it pulls in
+(gcc, binutils, make, etc — not tiny), but the point of keeping `yay` in
+base at all was AUR-friendliness, and that's dead without this.
 
 ### Compositor + session
 `sway` `sway-contrib` `swaybg` `swayidle` `swaylock` `lightdm` `lightdm-gtk-greeter` `polkit` `xorg-xwayland` `xdg-desktop-portal-wlr` `xdg-desktop-portal-gtk` `xdg-utils`
@@ -103,5 +105,7 @@ feature, not a "maybe someone prints" extra, so `cups` `cups-pdf`
 
 ## Open decisions for you
 
-1. `base-devel`: keep for AUR-friendliness, or cut for minimalism?
-3. Any default browser at all, or leave that entirely to first boot?
+All resolved. Base package set is settled — see BASE-PACKAGES.md groups
+above and the "explicitly cut" list for what's excluded and why. No
+default browser ships in base (see note above); first-boot documentation
+should point users at installing whichever browser they want.
