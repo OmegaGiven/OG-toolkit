@@ -1,0 +1,100 @@
+# OG-OS base package set (curated, not a clone of this machine)
+
+This machine's `packages.x86_64`/`foreign-packages.txt` (frozen in this
+repo) is 139+18 packages — that's *this user's* box, including Steam,
+VirtualBox, Android SDK, a dozen personal apps, and a full dev
+toolchain. None of that belongs in a default install. This doc is the
+actual base set: what makes the OG-suite experience work out of the box
+for someone who just installed the ISO, plus genuinely everyday tools.
+Everything else becomes an optional group, installed after the fact if
+someone wants it — never in the base image.
+
+Checked against the running config, not guessed: `$term` in
+`~/.config/sway/config` is `alacritty` (foot is unused), the launcher is
+`og-search-launch` (wofi/wmenu are unused — superseded), waybar is fully
+replaced by og-bar, clipman by og-clip, pavucontrol is superseded by
+og-settings' Audio tab (but see note below).
+
+## Base groups
+
+### Core system (required, no debate)
+`base` `base-devel` `linux` `linux-firmware` `amd-ucode` `intel-ucode` `sudo` `efibootmgr`
+
+`intel-ucode` isn't on this AMD box but must ship in a general ISO — same
+logic as keeping all GPU drivers (section "Hardware breadth" below).
+`base-devel` is small and keeps the door open for `makepkg`/AUR even
+though the OG-suite itself ships as prebuilt packages (2b below) —
+worth it for a "hacker-friendly" default; cut it if the goal is minimal.
+
+### Compositor + session
+`sway` `sway-contrib` `swaybg` `swayidle` `swaylock` `lightdm` `lightdm-gtk-greeter` `polkit` `xorg-xwayland` `xdg-desktop-portal-wlr` `xdg-desktop-portal-gtk` `xdg-utils`
+
+### The OG suite itself (own packages, built via PKGBUILD, not from official repos)
+og-bar, og-settings, og-search, og-clip, og-note, og-notif-center,
+og-notify, og-files, og-links, og-apps — these ship as the local `[ogos]`
+repo per OS-PLAN.md 2c, not as generic packages someone else maintains.
+
+Runtime deps these actually need: `ttf-nerd-fonts-symbols` +
+`ttf-nerd-fonts-symbols-common` (og-bar/og-search icon glyphs — verified
+this is the actual installed font providing them), `wl-clipboard`
+(og-clip shells out to it), `grim` `slurp` (screenshot pipeline).
+
+### Audio
+`pipewire-alsa` `pipewire-jack` `pipewire-pulse` `alsa-utils` `alsa-firmware` `sof-firmware`
+
+`pavucontrol` dropped from base — og-settings' Audio tab is the intended
+front-end now. Keep it in an optional "troubleshooting tools" group
+since it's a good fallback when something's wrong with our own tab.
+
+### Bluetooth / network
+`bluez` `bluez-utils` `iwd` `wireless_tools` `openssh` `tailscale` `wireguard-tools`
+
+`blueman` dropped — og-settings' Network tab drives bluetoothctl
+directly. Same superseded logic as pavucontrol; not carrying the GUI
+duplicate into base.
+
+### GPU / hardware breadth
+`mesa-utils` `vulkan-tools` `vulkan-intel` `vulkan-radeon` `vulkan-nouveau` `libva-intel-driver` `intel-media-driver` `libva-utils` `xf86-video-amdgpu` `xf86-video-ati` `xf86-video-nouveau`
+
+Deliberately broad (installs drivers for hardware this box doesn't have)
+— the whole point of a general installer is "new or repeat system,"
+per OS-PLAN.md 2e. Don't trim this to what this machine needs.
+
+### Qt theming (Dolphin and friends look right under wayland)
+`qt6-wayland` `qt5ct` `qt6ct` `breeze`
+
+### Everyday utilities (small, genuinely useful for most desktop users)
+`git` `nano` `vim` `htop` `btop` (btop is a hard dependency — og-settings'
+SysMonitor tab embeds it directly, not optional) `unzip` `wget` `less`
+`brightnessctl` `smartmontools` `zram-generator` `flatpak` `mpv`
+
+`vlc` dropped in favor of `mpv` alone — no reason to ship two media
+players in a *bare-bones* base; `vlc` is one `pacman -S` away for anyone
+who wants it.
+
+### AUR helper
+`yay` — kept even though the base image doesn't itself need AUR, since
+it's the standard way anyone extends this system afterward.
+
+## Explicitly cut from base (this machine has them, base install won't)
+
+- **Superseded by our own tools**: `waybar`, `wofi`, `wmenu`, `foot`, `clipman`, `pavucontrol`* , `blueman`*, `wireless_tools`** (*kept as optional fallback, not base; **actually kept, see above — listed here only because iwd mostly supersedes it in practice, low cost to keep both)
+- **Gaming stack**: `steam` `gamescope` `gamemode` `lib32-gamemode` `mangohud` `lib32-mangohud` `lutris` `heroic-games-launcher-bin` `moonlight-qt` `wine-staging` `winetricks` `alvr-bin` `alvr-bin-debug` — real, well-defined "gaming" optional group for later, not base.
+- **Virtualization stack**: `qemu-desktop` `qemu-user-static` `virt-manager` `virt-viewer` `virtualbox` `virtualbox-guest-iso` `libguestfs` `nfs-utils` `multipath-tools` `vde2` `dnsmasq` — optional "virtualization" group.
+- **Dev toolchain**: `docker` `docker-compose` `code` `github-cli` `rustup` `npm` `nvm` `wasm-pack` `cmake` `cargo-about` `jdk17-openjdk` `android-sdk-cmdline-tools-latest` `android-tools` `python-protobuf` — optional "development" group.
+- **Personal apps (this user's choices, not defaults for anyone)**: `discord` `vesktop` `vesktop-debug` `brave-bin` `min-browser-bin` `gimp` `plasticity-bin` `obs-studio` `godot` `sidequest-bin` `sidequest-bin-debug` `brother-hll2300d` `brother-hll2300d-debug` `usbmuxd` `sshpass` `fish` `yazi` `cups` `cups-pdf` `ghostscript` `gsfonts` `gutenprint`
+
+Cups/printing demoted to optional rather than dropped outright — common
+enough to be a real "everyday" group, just not universal enough to force
+into every install.
+
+No default browser ships in base. Recommend documenting "install
+firefox or your browser of choice" in first-boot rather than picking one
+for everyone — `brave-bin` here was this user's personal pick via AUR,
+not a default worth baking in.
+
+## Open decisions for you
+
+1. Cups/printing: base or optional? (leaning optional above)
+2. `base-devel`: keep for AUR-friendliness, or cut for minimalism?
+3. Any default browser at all, or leave that entirely to first boot?
