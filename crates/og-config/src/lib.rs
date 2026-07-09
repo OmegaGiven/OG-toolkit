@@ -371,6 +371,53 @@ fn default_true() -> bool {
     true
 }
 
+/// Left/Middle/Right when the bar is on Top/Bottom; Top/Middle/Bottom
+/// when it's on Left/Right — same enum either way, meaning just follows
+/// `BarConfig::position`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum SectionAlign {
+    #[default]
+    Start,
+    Middle,
+    End,
+}
+
+impl SectionAlign {
+    pub fn label(&self, position: Edge) -> &'static str {
+        let vertical_bar = matches!(position, Edge::Left | Edge::Right);
+        match (self, vertical_bar) {
+            (SectionAlign::Start, false) => "Left",
+            (SectionAlign::Middle, false) => "Middle",
+            (SectionAlign::End, false) => "Right",
+            (SectionAlign::Start, true) => "Top",
+            (SectionAlign::Middle, true) => "Middle",
+            (SectionAlign::End, true) => "Bottom",
+        }
+    }
+}
+
+/// A user-defined slice of the bar. `percent` is a relative share of the
+/// bar's total length (via `Length::FillPortion`, not a strict 0-100 that
+/// must sum to 100) — sections don't need to add up exactly, each just
+/// gets `percent / total_of_all_sections` of the space. `id` is a stable,
+/// never-reused counter (see `BarConfig::next_section_id`) so removing
+/// one section can't shift another's identity out from under it, same
+/// convention as `ClockConfig::id`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BarSection {
+    pub id: u32,
+    #[serde(default = "default_section_percent")]
+    pub percent: u32,
+    #[serde(default)]
+    pub align: SectionAlign,
+    #[serde(default)]
+    pub modules: Vec<ModuleConfig>,
+}
+
+fn default_section_percent() -> u32 {
+    33
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BarConfig {
     #[serde(default)]
@@ -383,12 +430,10 @@ pub struct BarConfig {
     pub spacing: u32,
     #[serde(default = "default_bar_padding")]
     pub padding: u32,
-    #[serde(default)]
-    pub modules_start: Vec<ModuleConfig>,
-    #[serde(default)]
-    pub modules_center: Vec<ModuleConfig>,
-    #[serde(default)]
-    pub modules_end: Vec<ModuleConfig>,
+    #[serde(default = "default_sections")]
+    pub sections: Vec<BarSection>,
+    #[serde(default = "default_next_section_id")]
+    pub next_section_id: u32,
     /// Per-app-id/class icon for the workspaces module — matched
     /// case-insensitively as a substring against a window's app_id or
     /// class, first match wins. User-editable list, not hardcoded
@@ -455,21 +500,33 @@ fn default_bar_padding() -> u32 {
     4
 }
 
-impl Default for BarConfig {
-    fn default() -> Self {
-        Self {
-            position: Edge::Top,
-            thickness: default_bar_thickness(),
-            item_size: default_item_size(),
-            spacing: default_bar_spacing(),
-            padding: default_bar_padding(),
-            modules_start: vec![ModuleConfig { kind: ModuleKind::Workspaces, enabled: true, size_override: None }],
-            modules_center: vec![
+fn default_next_section_id() -> u32 {
+    4
+}
+
+fn default_sections() -> Vec<BarSection> {
+    vec![
+        BarSection {
+            id: 1,
+            percent: 33,
+            align: SectionAlign::Start,
+            modules: vec![ModuleConfig { kind: ModuleKind::Workspaces, enabled: true, size_override: None }],
+        },
+        BarSection {
+            id: 2,
+            percent: 34,
+            align: SectionAlign::Middle,
+            modules: vec![
                 ModuleConfig { kind: ModuleKind::Cpu, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Memory, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Clock { timezone: String::new() }, enabled: true, size_override: None },
             ],
-            modules_end: vec![
+        },
+        BarSection {
+            id: 3,
+            percent: 33,
+            align: SectionAlign::End,
+            modules: vec![
                 ModuleConfig {
                     kind: ModuleKind::Launcher {
                         icon: "./".to_string(),
@@ -511,6 +568,20 @@ impl Default for BarConfig {
                 ModuleConfig { kind: ModuleKind::Pulseaudio, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Power, enabled: true, size_override: None },
             ],
+        },
+    ]
+}
+
+impl Default for BarConfig {
+    fn default() -> Self {
+        Self {
+            position: Edge::Top,
+            thickness: default_bar_thickness(),
+            item_size: default_item_size(),
+            spacing: default_bar_spacing(),
+            padding: default_bar_padding(),
+            sections: default_sections(),
+            next_section_id: default_next_section_id(),
             icon_rewrite: default_icon_rewrite(),
         }
     }
@@ -519,10 +590,44 @@ impl Default for BarConfig {
 impl BarConfig {
     pub fn load() -> Self {
         let path = bar_config_path();
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let Some(text) = std::fs::read_to_string(&path).ok() else { return Self::default() };
+
+        // Pre-section-system config files have `modules_start`/`_center`/
+        // `_end` instead of `sections` — without this, loading one of
+        // those would silently fall back to serde's `#[serde(default =
+        // "default_sections")]` and discard whatever modules were
+        // actually in those three lists (real user customization, not
+        // just the stock defaults, on at least the machine this was
+        // written on). Migrate them into three sections (Start/Middle/End,
+        // ~33% each) instead of losing that arrangement.
+        let mut value: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => return Self::default(),
+        };
+        if value.get("sections").is_none() {
+            if let Some(obj) = value.as_object_mut() {
+                let take_list = |obj: &mut serde_json::Map<String, serde_json::Value>, key: &str| {
+                    obj.remove(key).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+                };
+                let start = take_list(obj, "modules_start");
+                let center = take_list(obj, "modules_center");
+                let end = take_list(obj, "modules_end");
+                let make_section = |id: u32, percent: u32, align: &str, modules: Vec<serde_json::Value>| {
+                    serde_json::json!({ "id": id, "percent": percent, "align": align, "modules": modules })
+                };
+                obj.insert(
+                    "sections".to_string(),
+                    serde_json::Value::Array(vec![
+                        make_section(1, 33, "Start", start),
+                        make_section(2, 34, "Middle", center),
+                        make_section(3, 33, "End", end),
+                    ]),
+                );
+                obj.insert("next_section_id".to_string(), serde_json::json!(4));
+            }
+        }
+
+        serde_json::from_value(value).unwrap_or_default()
     }
 
     pub fn save(&self) -> Result<(), String> {
