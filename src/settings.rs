@@ -64,6 +64,7 @@ fn kind_label(kind: &ModuleKind) -> String {
         ModuleKind::Launcher { tooltip, .. } => tooltip.clone(),
         ModuleKind::Settings => "Settings".to_string(),
         ModuleKind::Power => "Power".to_string(),
+        ModuleKind::Taskbar => "Taskbar".to_string(),
     }
 }
 
@@ -98,7 +99,7 @@ fn labeled_slider(
     .into()
 }
 
-fn module_toggle_row(_colors: AppColors, section: Section, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
+fn module_toggle_row(colors: AppColors, section: Section, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
     let label = kind_label(kind);
     let mut r = row![checkbox(label, enabled).on_toggle(move |_| Message::ToggleModule(section, index))].spacing(8);
     if let ModuleKind::Clock { timezone } = kind {
@@ -109,7 +110,52 @@ fn module_toggle_row(_colors: AppColors, section: Section, index: usize, kind: &
                 .on_input(move |v| Message::SetClockTimezone(section, index, v)),
         );
     }
+    r = r.push(iced::widget::horizontal_space());
+    r = r.push(
+        button(text("\u{f1f8}").size(12).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(colors.text) }))
+            .padding(4)
+            .style(move |_, status| button::Style {
+                background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                    colors.header_btn_bg
+                } else {
+                    Color::TRANSPARENT
+                })),
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                text_color: colors.text,
+                ..Default::default()
+            })
+            .on_press(Message::RemoveModule(section, index)),
+    );
     r.into()
+}
+
+fn add_module_row(colors: AppColors, section: Section, present: &[ModuleKind]) -> Element<'static, Message> {
+    let addable: Vec<Element<Message>> = ModuleKind::addable()
+        .iter()
+        .filter(|k| !present.contains(k))
+        .map(|kind| {
+            let kind = kind.clone();
+            let label = kind_label(&kind);
+            button(text(format!("+ {label}")).size(11).style(move |_| text::Style { color: Some(colors.text) }))
+                .padding([2, 6])
+                .style(move |_, status| button::Style {
+                    background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                        colors.accent
+                    } else {
+                        colors.surface
+                    })),
+                    border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                    text_color: colors.text,
+                    ..Default::default()
+                })
+                .on_press(Message::AddModule(section, kind))
+                .into()
+        })
+        .collect();
+    if addable.is_empty() {
+        return iced::widget::Space::new(Length::Shrink, Length::Shrink).into();
+    }
+    row(addable).spacing(4).wrap().into()
 }
 
 pub fn popup_view(colors: AppColors, bar_cfg: &og_config::BarConfig) -> Element<'_, Message> {
@@ -129,20 +175,25 @@ pub fn popup_view(colors: AppColors, bar_cfg: &og_config::BarConfig) -> Element<
     ]
     .spacing(8);
 
-    let module_list = column(
-        [
-            (Section::Start, &bar_cfg.modules_start),
-            (Section::Center, &bar_cfg.modules_center),
-            (Section::End, &bar_cfg.modules_end),
+    let section_block = |title: &'static str, section: Section, list: &[og_config::ModuleConfig]| -> Element<'static, Message> {
+        let present: Vec<ModuleKind> = list.iter().map(|m| m.kind.clone()).collect();
+        let rows: Vec<Element<Message>> =
+            list.iter().enumerate().map(|(i, m)| module_toggle_row(colors, section, i, &m.kind, m.enabled)).collect();
+        column![
+            text(title).size(11).style(move |_| text::Style { color: Some(colors.dim_text) }),
+            column(rows).spacing(4),
+            add_module_row(colors, section, &present),
         ]
-        .into_iter()
-        .flat_map(|(section, list)| {
-            list.iter()
-                .enumerate()
-                .map(move |(i, m)| module_toggle_row(colors, section, i, &m.kind, m.enabled))
-        }),
-    )
-    .spacing(4);
+        .spacing(6)
+        .into()
+    };
+
+    let module_list = column![
+        section_block("Start", Section::Start, &bar_cfg.modules_start),
+        section_block("Center", Section::Center, &bar_cfg.modules_center),
+        section_block("End", Section::End, &bar_cfg.modules_end),
+    ]
+    .spacing(12);
 
     let apply_button = button(text("Apply thickness change").size(12))
         .padding(6)
@@ -159,16 +210,18 @@ pub fn popup_view(colors: AppColors, bar_cfg: &og_config::BarConfig) -> Element<
         .on_press(Message::ApplyRelayout);
 
     container(
-        column![
-            text("Bar edge").size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
-            edge_row,
-            sliders,
-            text("Modules").size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
-            module_list,
-            apply_button,
-        ]
-        .spacing(10)
-        .padding(10),
+        iced::widget::scrollable(
+            column![
+                text("Bar edge").size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
+                edge_row,
+                sliders,
+                text("Modules").size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
+                module_list,
+                apply_button,
+            ]
+            .spacing(10)
+            .padding(10),
+        ),
     )
     .width(Length::Fill)
     .height(Length::Fill)

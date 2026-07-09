@@ -15,6 +15,7 @@ use crate::modules::launcher::Launcher;
 use crate::modules::memory::Memory;
 use crate::modules::network::Network;
 use crate::modules::pulseaudio::Pulseaudio;
+use crate::modules::taskbar::Taskbar;
 use crate::modules::workspaces::Workspaces;
 use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
@@ -26,6 +27,7 @@ fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRu
         .filter_map(|m| -> Option<Box<dyn Module>> {
             match &m.kind {
                 ModuleKind::Workspaces => Some(Box::new(Workspaces::new(icon_rewrite.to_vec()))),
+                ModuleKind::Taskbar => Some(Box::new(Taskbar::new(icon_rewrite.to_vec()))),
                 ModuleKind::Clock { timezone } => Some(Box::new(Clock::new(timezone.clone(), hour12))),
                 ModuleKind::Launcher { icon, command, .. } => {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))
@@ -91,6 +93,12 @@ impl Bar {
     }
 }
 
+fn rebuild_modules(bar: &mut Bar) {
+    bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite, bar.hour12);
+    bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite, bar.hour12);
+    bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite, bar.hour12);
+}
+
 pub fn remove_id(bar: &mut Bar, id: iced::window::Id) {
     if bar.popup.as_ref().is_some_and(|p| p.id == id) {
         bar.popup = None;
@@ -104,6 +112,16 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             return Task::future(async move {
                 let _ = tokio::process::Command::new("swaymsg")
                     .arg(format!("workspace {name}"))
+                    .output()
+                    .await;
+                Message::Tick
+            });
+        }
+        Message::FocusWindow(con_id) => {
+            let con_id = *con_id;
+            return Task::future(async move {
+                let _ = tokio::process::Command::new("swaymsg")
+                    .arg(format!("[con_id={con_id}] focus"))
                     .output()
                     .await;
                 Message::Tick
@@ -208,9 +226,24 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 m.enabled = !m.enabled;
             }
             let _ = bar.bar_cfg.save();
-            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite, bar.hour12);
-            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite, bar.hour12);
-            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite, bar.hour12);
+            rebuild_modules(bar);
+        }
+        Message::RemoveModule(section, index) => {
+            let list = section_list(&mut bar.bar_cfg, *section);
+            if *index < list.len() {
+                list.remove(*index);
+            }
+            let _ = bar.bar_cfg.save();
+            rebuild_modules(bar);
+        }
+        Message::AddModule(section, kind) => {
+            section_list(&mut bar.bar_cfg, *section).push(ModuleConfig {
+                kind: kind.clone(),
+                enabled: true,
+                size_override: None,
+            });
+            let _ = bar.bar_cfg.save();
+            rebuild_modules(bar);
         }
         Message::SetClockTimezone(section, index, tz) => {
             if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
@@ -219,9 +252,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 }
             }
             let _ = bar.bar_cfg.save();
-            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite, bar.hour12);
-            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite, bar.hour12);
-            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite, bar.hour12);
+            rebuild_modules(bar);
         }
         Message::ApplyRelayout => {
             let _ = bar.bar_cfg.save();

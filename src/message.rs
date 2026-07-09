@@ -1,6 +1,7 @@
 use iced_layershell::to_layer_message;
-use og_config::Edge;
+use og_config::{Edge, ModuleKind};
 
+use crate::modules::taskbar::TaskbarWindow;
 use crate::modules::workspaces::WorkspaceInfo;
 use crate::power::PowerAction;
 use crate::settings::Section;
@@ -10,6 +11,8 @@ use crate::settings::Section;
 pub enum Message {
     WorkspacesUpdated(Vec<WorkspaceInfo>),
     FocusWorkspace(String),
+    TaskbarUpdated(Vec<TaskbarWindow>),
+    FocusWindow(i64),
     Tick,
     Launch(String),
     PulseaudioToggleMute,
@@ -24,6 +27,8 @@ pub enum Message {
     SetSpacing(u32),
     SetPadding(u32),
     ToggleModule(Section, usize),
+    RemoveModule(Section, usize),
+    AddModule(Section, ModuleKind),
     SetClockTimezone(Section, usize, String),
     ApplyRelayout,
 }
