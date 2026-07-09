@@ -20,12 +20,12 @@ use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
 use crate::settings::{Section, SettingsButton};
 
-fn build_modules(list: &[ModuleConfig]) -> Vec<Box<dyn Module>> {
+fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRule]) -> Vec<Box<dyn Module>> {
     list.iter()
         .filter(|m| m.enabled)
         .filter_map(|m| -> Option<Box<dyn Module>> {
             match &m.kind {
-                ModuleKind::Workspaces => Some(Box::new(Workspaces::new())),
+                ModuleKind::Workspaces => Some(Box::new(Workspaces::new(icon_rewrite.to_vec()))),
                 ModuleKind::Clock { timezone } => Some(Box::new(Clock::new(timezone.clone()))),
                 ModuleKind::Launcher { icon, command, .. } => {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))
@@ -66,9 +66,9 @@ impl Bar {
         let bar_cfg = BarConfig::load();
         let colors = AppColors::from_config(&Config::load(), "og-bar");
         let bar = Self {
-            start: build_modules(&bar_cfg.modules_start),
-            center: build_modules(&bar_cfg.modules_center),
-            end: build_modules(&bar_cfg.modules_end),
+            start: build_modules(&bar_cfg.modules_start, &bar_cfg.icon_rewrite),
+            center: build_modules(&bar_cfg.modules_center, &bar_cfg.icon_rewrite),
+            end: build_modules(&bar_cfg.modules_end, &bar_cfg.icon_rewrite),
             colors,
             bar_cfg,
             popup: None,
@@ -177,9 +177,9 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 m.enabled = !m.enabled;
             }
             let _ = bar.bar_cfg.save();
-            bar.start = build_modules(&bar.bar_cfg.modules_start);
-            bar.center = build_modules(&bar.bar_cfg.modules_center);
-            bar.end = build_modules(&bar.bar_cfg.modules_end);
+            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite);
+            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite);
+            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite);
         }
         Message::SetClockTimezone(section, index, tz) => {
             if let Some(m) = section_list(&mut bar.bar_cfg, *section).get_mut(*index) {
@@ -188,9 +188,9 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 }
             }
             let _ = bar.bar_cfg.save();
-            bar.start = build_modules(&bar.bar_cfg.modules_start);
-            bar.center = build_modules(&bar.bar_cfg.modules_center);
-            bar.end = build_modules(&bar.bar_cfg.modules_end);
+            bar.start = build_modules(&bar.bar_cfg.modules_start, &bar.bar_cfg.icon_rewrite);
+            bar.center = build_modules(&bar.bar_cfg.modules_center, &bar.bar_cfg.icon_rewrite);
+            bar.end = build_modules(&bar.bar_cfg.modules_end, &bar.bar_cfg.icon_rewrite);
         }
         Message::ApplyRelayout => {
             let _ = bar.bar_cfg.save();
