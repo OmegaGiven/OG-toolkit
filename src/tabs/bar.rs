@@ -8,7 +8,7 @@
 //! every change instantly), this tab follows the rest of og-settings:
 //! changes stage in-memory and only hit disk on "Apply & Save".
 
-use iced::widget::{button, checkbox, column, container, row, text};
+use iced::widget::{button, checkbox, column, container, row, text, text_input};
 use iced::{Background, Border, Color, Element, Length};
 
 use og_config::{BarConfig, Edge, ModuleConfig, ModuleKind};
@@ -33,6 +33,14 @@ fn section_list(bar_config: &mut BarConfig, section: BarSection) -> &mut Vec<Mod
 pub fn toggle_module(bar_config: &mut BarConfig, section: BarSection, index: usize) {
     if let Some(m) = section_list(bar_config, section).get_mut(index) {
         m.enabled = !m.enabled;
+    }
+}
+
+pub fn set_clock_timezone(bar_config: &mut BarConfig, section: BarSection, index: usize, tz: String) {
+    if let Some(m) = section_list(bar_config, section).get_mut(index) {
+        if let ModuleKind::Clock { timezone } = &mut m.kind {
+            *timezone = tz;
+        }
     }
 }
 
@@ -85,7 +93,16 @@ fn labeled_slider(
 
 fn module_toggle_row(section: BarSection, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
     let label = kind_label(kind);
-    row![checkbox(label, enabled).on_toggle(move |_| Message::BarToggleModule(section, index))].into()
+    let mut r = row![checkbox(label, enabled).on_toggle(move |_| Message::BarToggleModule(section, index))].spacing(8);
+    if let ModuleKind::Clock { timezone } = kind {
+        r = r.push(
+            text_input("IANA tz, e.g. America/Chicago (blank = local)", timezone)
+                .size(11)
+                .width(Length::Fixed(200.0))
+                .on_input(move |v| Message::BarSetClockTimezone(section, index, v)),
+        );
+    }
+    r.into()
 }
 
 pub fn view<'a>(bar_config: &'a BarConfig, colors: AppColors) -> Element<'a, Message> {

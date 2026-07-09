@@ -159,6 +159,7 @@ pub enum Message {
     BarSetSpacing(u32),
     BarSetPadding(u32),
     BarToggleModule(BarSection, usize),
+    BarSetClockTimezone(BarSection, usize, String),
 
     // Hotkeys — bindings
     HotkeyStartCapture(usize),
@@ -883,6 +884,9 @@ impl App {
             Message::BarSetPadding(v) => { self.bar_config.padding = v; }
             Message::BarToggleModule(section, index) => {
                 tabs::bar::toggle_module(&mut self.bar_config, section, index);
+            }
+            Message::BarSetClockTimezone(section, index, tz) => {
+                tabs::bar::set_clock_timezone(&mut self.bar_config, section, index, tz);
             }
 
             // Hotkeys — bindings
