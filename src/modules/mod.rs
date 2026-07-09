@@ -6,4 +6,5 @@ pub mod memory;
 pub mod network;
 pub mod pulseaudio;
 pub mod taskbar;
+pub mod tray;
 pub mod workspaces;

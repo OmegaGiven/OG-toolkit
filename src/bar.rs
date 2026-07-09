@@ -16,6 +16,7 @@ use crate::modules::memory::Memory;
 use crate::modules::network::Network;
 use crate::modules::pulseaudio::Pulseaudio;
 use crate::modules::taskbar::Taskbar;
+use crate::modules::tray::Tray;
 use crate::modules::workspaces::Workspaces;
 use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
@@ -39,8 +40,7 @@ fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRu
                 ModuleKind::Network => Some(Box::new(Network::new())),
                 ModuleKind::Bluetooth => Some(Box::new(Bluetooth::new())),
                 ModuleKind::Pulseaudio => Some(Box::new(Pulseaudio::new())),
-                // Tray: step 8 spike (real unknown, per PLAN.md section 9/13).
-                ModuleKind::Tray => None,
+                ModuleKind::Tray => Some(Box::new(Tray::new())),
             }
         })
         .collect()
@@ -124,6 +124,13 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                     .arg(format!("[con_id={con_id}] focus"))
                     .output()
                     .await;
+                Message::Tick
+            });
+        }
+        Message::TrayActivate(address) => {
+            let address = address.clone();
+            return Task::future(async move {
+                crate::modules::tray::activate(address).await;
                 Message::Tick
             });
         }
