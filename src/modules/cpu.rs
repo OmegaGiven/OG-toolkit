@@ -50,7 +50,7 @@ impl Module for Cpu {
         Length::Shrink
     }
 
-    fn view(&self, colors: AppColors, _size: u32, orientation: Orientation) -> Element<'_, Message> {
+    fn view(&self, colors: AppColors, size: u32, orientation: Orientation) -> Element<'_, Message> {
         let fg = if self.usage_pct >= CRITICAL_PCT {
             CRITICAL_COLOR
         } else if self.usage_pct >= WARNING_PCT {
@@ -58,7 +58,7 @@ impl Module for Cpu {
         } else {
             colors.text
         };
-        button(container(label_value("CPU", format!("{:.0}%", self.usage_pct), fg, orientation)))
+        button(container(label_value("CPU", format!("{:.0}%", self.usage_pct), fg, size, orientation)))
         .padding(4)
         .style(move |_, status| button::Style {
             background: Some(Background::Color(if matches!(status, button::Status::Hovered) {

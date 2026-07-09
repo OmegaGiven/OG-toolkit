@@ -43,7 +43,7 @@ impl Module for Memory {
         Length::Shrink
     }
 
-    fn view(&self, colors: AppColors, _size: u32, orientation: Orientation) -> Element<'_, Message> {
+    fn view(&self, colors: AppColors, size: u32, orientation: Orientation) -> Element<'_, Message> {
         let fg = if self.usage_pct >= CRITICAL_PCT {
             CRITICAL_COLOR
         } else if self.usage_pct >= WARNING_PCT {
@@ -51,7 +51,7 @@ impl Module for Memory {
         } else {
             colors.text
         };
-        container(label_value("RAM", format!("{:.0}%", self.usage_pct), fg, orientation))
+        container(label_value("RAM", format!("{:.0}%", self.usage_pct), fg, size, orientation))
             .padding(4)
             .into()
     }

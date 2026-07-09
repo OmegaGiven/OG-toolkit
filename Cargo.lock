@@ -1811,8 +1811,6 @@ dependencies = [
 [[package]]
 name = "layershellev"
 version = "0.13.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e5dd46870775aec1b5265b29f3dbd38845423dff5bb1a11e0f7c12e312e6ecf"
 dependencies = [
  "bitflags 2.13.0",
  "calloop 0.14.4",

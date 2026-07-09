@@ -16,9 +16,15 @@ use crate::message::Message;
 /// `cell_length` override) rather than forced into the fixed square every
 /// other module uses — that fixed square is what forced padding to 0 just
 /// to keep a value like "100%" from clipping.
-pub fn label_value<'a>(label: &'a str, value: String, color: Color, orientation: Orientation) -> Element<'a, Message> {
-    let label_widget = text(label).size(10).style(move |_| text::Style { color: Some(Color { a: 0.65, ..color }) });
-    let value_widget = text(value).size(12).style(move |_| text::Style { color: Some(color) });
+pub fn label_value<'a>(label: &'a str, value: String, color: Color, size: u32, orientation: Orientation) -> Element<'a, Message> {
+    // Container is Shrink (via the caller's cell_length), so nothing here
+    // clips regardless of font size — but the "Item size" slider should
+    // still visibly do *something* to these modules, so font size scales
+    // off it instead of being fixed constants that ignored it entirely.
+    let label_size = (size as f32 * 0.3).clamp(8.0, 18.0);
+    let value_size = (size as f32 * 0.38).clamp(9.0, 22.0);
+    let label_widget = text(label).size(label_size).style(move |_| text::Style { color: Some(Color { a: 0.65, ..color }) });
+    let value_widget = text(value).size(value_size).style(move |_| text::Style { color: Some(color) });
     match orientation {
         Orientation::Horizontal => row![label_widget, value_widget].spacing(4).align_y(iced::Alignment::Center).into(),
         Orientation::Vertical => column![label_widget, value_widget].align_x(iced::Alignment::Center).into(),
