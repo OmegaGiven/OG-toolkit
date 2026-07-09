@@ -35,7 +35,7 @@ state this disk happens to be in."
 
 ### 2a. Package manifest
 - `pacman -Qqe` → official repo package list (139 today) → `packages.x86_64` for archiso.
-- `pacman -Qqm` → AUR/foreign package list (17 today: yay, brave-bin, vesktop, alvr-bin, etc. — note `discord` on this machine isn't in this list, so it's coming from a configured sync repo, not AUR; check `pacman.conf` for which repo before assuming AUR-only handling covers it) — archiso can't pull AUR at build time by default; either:
+- `pacman -Qqm` → AUR/foreign package list (18 today: yay, brave-bin, vesktop, alvr-bin, etc. — `discord` is *not* in this list; confirmed it's actually shipped in Arch's official `extra` repo now, not AUR) — archiso can't pull AUR at build time by default; either:
   - (a) vendor a local pacman repo of prebuilt AUR packages baked into the ISO (`repo-add`, then a local `[ogos]` repo entry in the image's pacman.conf), or
   - (b) ship `yay` + a first-boot script that pulls AUR packages post-install (needs network at install time — acceptable for a personal respin, not for the "airgapped installer" ideal).
   - Recommendation: (a) for anything used at every boot (yay itself, mangohud, gamemode-adjacent), (b) as a documented fallback for the long tail.
