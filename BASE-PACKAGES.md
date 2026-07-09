@@ -60,9 +60,6 @@ Deliberately broad (installs drivers for hardware this box doesn't have)
 — the whole point of a general installer is "new or repeat system,"
 per OS-PLAN.md 2e. Don't trim this to what this machine needs.
 
-### Qt theming (Dolphin and friends look right under wayland)
-`qt6-wayland` `qt5ct` `qt6ct` `breeze`
-
 ### Everyday utilities (small, genuinely useful for most desktop users)
 `git` `nano` `vim` `htop` `btop` (btop is a hard dependency — og-settings'
 SysMonitor tab embeds it directly, not optional) `unzip` `wget` `less`
@@ -82,7 +79,8 @@ it's the standard way anyone extends this system afterward.
 - **Gaming stack**: `steam` `gamescope` `gamemode` `lib32-gamemode` `mangohud` `lib32-mangohud` `lutris` `heroic-games-launcher-bin` `moonlight-qt` `wine-staging` `winetricks` `alvr-bin` `alvr-bin-debug` — real, well-defined "gaming" optional group for later, not base.
 - **Virtualization stack**: `qemu-desktop` `qemu-user-static` `virt-manager` `virt-viewer` `virtualbox` `virtualbox-guest-iso` `libguestfs` `nfs-utils` `multipath-tools` `vde2` `dnsmasq` — optional "virtualization" group.
 - **Dev toolchain**: `docker` `docker-compose` `code` `github-cli` `rustup` `npm` `nvm` `wasm-pack` `cmake` `cargo-about` `jdk17-openjdk` `android-sdk-cmdline-tools-latest` `android-tools` `python-protobuf` — optional "development" group.
-- **Personal apps (this user's choices, not defaults for anyone)**: `discord` `vesktop` `vesktop-debug` `brave-bin` `min-browser-bin` `gimp` `plasticity-bin` `obs-studio` `godot` `sidequest-bin` `sidequest-bin-debug` `brother-hll2300d` `brother-hll2300d-debug` `usbmuxd` `sshpass` `fish` `yazi` `cups` `cups-pdf` `ghostscript` `gsfonts` `gutenprint`
+- **Personal apps (this user's choices, not defaults for anyone)**: `discord` `vesktop` `vesktop-debug` `brave-bin` `min-browser-bin` `gimp` `plasticity-bin` `obs-studio` `godot` `sidequest-bin` `sidequest-bin-debug` `brother-hll2300d` `brother-hll2300d-debug` `usbmuxd` `sshpass` `fish` `yazi` `cups` `cups-pdf` `ghostscript` `gsfonts` `gutenprint` `dolphin`
+- **Qt theming** (`qt6-wayland` `qt5ct` `qt6ct` `breeze`): only existed on this machine to make Dolphin look right — checked, nothing else installed actually depends on them (`Required By: None` on all four). Since Dolphin's cut and og-files/file-manager is the intended default, these go too rather than shipping dead weight.
 
 Cups/printing demoted to optional rather than dropped outright — common
 enough to be a real "everyday" group, just not universal enough to force
