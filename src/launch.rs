@@ -66,3 +66,20 @@ pub fn launch_app(config: &Config, exec: &str) {
         let _ = Command::new(parts[0]).args(&parts[1..]).spawn();
     }
 }
+
+/// Opens a file-search result with whatever the desktop considers its
+/// default handler — a directory opens in the file manager, a document in
+/// its associated app, exactly like double-clicking it would.
+pub fn open_file(path: &std::path::Path) {
+    let _ = Command::new("xdg-open").arg(path).spawn();
+}
+
+/// Settings-search result: jump straight to the matching og-settings tab.
+/// Absolute path, not bare "og-settings" — sway's own process environment
+/// has no ~/.local/bin on PATH (same bug class fixed earlier for
+/// og-power-apply), and every og-settings launch elsewhere in this
+/// toolkit already uses the full path for exactly that reason.
+pub fn open_settings_tab(tab_arg: &str) {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let _ = Command::new(format!("{home}/.local/bin/og-settings")).arg("--tab").arg(tab_arg).spawn();
+}

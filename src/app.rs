@@ -2,9 +2,13 @@ use iced::widget::{column, container, row, text, text_input};
 use iced::{Background, Border, Color, Element, Event, Length, Task};
 use iced::keyboard;
 
+use std::path::PathBuf;
+
 use crate::apps::{filter_apps, load_app_registry, AppEntry};
 use crate::config::{Config, APP_TINT_SEED};
+use crate::file_search;
 use crate::launch;
+use crate::settings_search::{self, SettingsMatch};
 use og_theme::{apply_color_variance, hex_to_color};
 
 #[derive(Debug, Clone)]
@@ -13,6 +17,10 @@ pub enum Message {
     MoveSelection(i32),
     Activate,
     Close,
+    /// Carries the query it was searched *for* — file search is async, so
+    /// a slow result for an old keystroke arriving after the user has kept
+    /// typing must be discarded, not rendered against the wrong query.
+    FileResults(String, Vec<PathBuf>),
 }
 
 /// Window is a fixed 420px tall with no scrollable — this is how many rows
@@ -25,6 +33,8 @@ enum Action<'a> {
     WebSearch(String),
     AskAi(String),
     LaunchApp(&'a AppEntry),
+    OpenFile(&'a PathBuf),
+    OpenSetting(SettingsMatch),
 }
 
 pub struct App {
@@ -32,6 +42,11 @@ pub struct App {
     apps: Vec<AppEntry>,
     query: String,
     selected: usize,
+    /// Only rendered when `file_results_query == query` — guards against
+    /// showing results for whatever the user was typing a few keystrokes
+    /// ago while this search was still in flight.
+    file_results: Vec<PathBuf>,
+    file_results_query: String,
 }
 
 impl App {
@@ -42,6 +57,8 @@ impl App {
                 apps: load_app_registry(),
                 query: String::new(),
                 selected: 0,
+                file_results: Vec::new(),
+                file_results_query: String::new(),
             },
             text_input::focus(text_input::Id::new("query")),
         )
@@ -70,14 +87,36 @@ impl App {
         actions.push(Action::WebSearch(self.query.clone()));
         actions.push(Action::AskAi(self.query.clone()));
         actions.extend(rest.take(8).map(Action::LaunchApp));
+
+        // Both last, in that order — real filesystem I/O and settings
+        // lookups are lower-priority than anything above, which is either
+        // free (web/AI) or already-known-installed apps.
+        if self.config.search_files_enabled && self.file_results_query == self.query {
+            actions.extend(self.file_results.iter().map(Action::OpenFile));
+        }
+        if self.config.search_settings_enabled {
+            actions.extend(settings_search::search(&self.query).into_iter().map(Action::OpenSetting));
+        }
+
         actions
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::QueryChanged(q) => {
-                self.query = q;
+                self.query = q.clone();
                 self.selected = 0;
+                if self.config.search_files_enabled && !q.trim().is_empty() {
+                    Task::future(async move { Message::FileResults(q.clone(), file_search::search(q).await) })
+                } else {
+                    Task::none()
+                }
+            }
+            Message::FileResults(for_query, results) => {
+                if for_query == self.query {
+                    self.file_results_query = for_query;
+                    self.file_results = results;
+                }
                 Task::none()
             }
             Message::MoveSelection(delta) => {
@@ -94,6 +133,8 @@ impl App {
                     Some(Action::WebSearch(q)) if !q.trim().is_empty() => launch::web_search(&self.config, &q),
                     Some(Action::AskAi(q)) if !q.trim().is_empty() => launch::ask_ai(&self.config, &q),
                     Some(Action::LaunchApp(entry)) => launch::launch_app(&self.config, &entry.exec),
+                    Some(Action::OpenFile(path)) => launch::open_file(path),
+                    Some(Action::OpenSetting(m)) => launch::open_settings_tab(m.tab_arg),
                     _ => return Task::none(),
                 }
                 iced::exit()
@@ -166,6 +207,8 @@ impl App {
                     "ai",
                 ),
                 Action::LaunchApp(entry) => (entry.name.clone(), "app"),
+                Action::OpenFile(path) => (path.display().to_string(), "file"),
+                Action::OpenSetting(m) => (format!("Settings: {}", m.label), "settings"),
             };
 
             container(

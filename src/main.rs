@@ -1,7 +1,9 @@
 mod app;
 mod apps;
 mod config;
+mod file_search;
 mod launch;
+mod settings_search;
 
 use app::App;
 
