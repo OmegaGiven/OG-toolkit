@@ -17,7 +17,6 @@ use crate::sway::{self, MonitorInfo};
 use crate::vpn;
 use crate::tabs::{self, Tab};
 use crate::tabs::audio::AudioSubTab;
-use crate::tabs::bar::BarSection;
 use crate::tabs::theme::hex_to_color;
 use crate::tabs::sysmon;
 use og_config::{BarConfig, Edge};
@@ -206,8 +205,15 @@ pub enum Message {
     BarSetItemSize(u32),
     BarSetSpacing(u32),
     BarSetPadding(u32),
-    BarToggleModule(BarSection, usize),
-    BarSetClockTimezone(BarSection, usize, String),
+    // section index (position in bar_config.sections), not BarSection::id
+    BarToggleModule(usize, usize),
+    BarRemoveModule(usize, usize),
+    BarAddModule(usize, og_config::ModuleKind),
+    BarSetClockTimezone(usize, usize, String),
+    BarAddSection,
+    BarRemoveSection(usize),
+    BarSetSectionPercent(usize, u32),
+    BarSetSectionAlign(usize, og_config::SectionAlign),
 
     // Hotkeys — bindings
     HotkeyStartCapture(usize),
@@ -1175,10 +1181,53 @@ impl App {
             Message::BarSetSpacing(v) => { self.bar_config.spacing = v; }
             Message::BarSetPadding(v) => { self.bar_config.padding = v; }
             Message::BarToggleModule(section, index) => {
-                tabs::bar::toggle_module(&mut self.bar_config, section, index);
+                if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
+                    m.enabled = !m.enabled;
+                }
+            }
+            Message::BarRemoveModule(section, index) => {
+                if let Some(list) = self.bar_config.sections.get_mut(section).map(|s| &mut s.modules) {
+                    if index < list.len() {
+                        list.remove(index);
+                    }
+                }
+            }
+            Message::BarAddModule(section, kind) => {
+                if let Some(s) = self.bar_config.sections.get_mut(section) {
+                    s.modules.push(og_config::ModuleConfig { kind, enabled: true, size_override: None });
+                }
             }
             Message::BarSetClockTimezone(section, index, tz) => {
-                tabs::bar::set_clock_timezone(&mut self.bar_config, section, index, tz);
+                if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
+                    if let og_config::ModuleKind::Clock { timezone } = &mut m.kind {
+                        *timezone = tz;
+                    }
+                }
+            }
+            Message::BarAddSection => {
+                let id = self.bar_config.next_section_id;
+                self.bar_config.next_section_id += 1;
+                self.bar_config.sections.push(og_config::BarSection {
+                    id,
+                    percent: 20,
+                    align: og_config::SectionAlign::Middle,
+                    modules: Vec::new(),
+                });
+            }
+            Message::BarRemoveSection(index) => {
+                if index < self.bar_config.sections.len() {
+                    self.bar_config.sections.remove(index);
+                }
+            }
+            Message::BarSetSectionPercent(index, percent) => {
+                if let Some(s) = self.bar_config.sections.get_mut(index) {
+                    s.percent = percent;
+                }
+            }
+            Message::BarSetSectionAlign(index, align) => {
+                if let Some(s) = self.bar_config.sections.get_mut(index) {
+                    s.align = align;
+                }
             }
 
             // Hotkeys — bindings

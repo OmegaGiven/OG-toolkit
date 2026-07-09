@@ -1,48 +1,19 @@
 //! og-bar's full-size config editor (PLAN.md section 8 in og-bar's own
-//! PLAN.md at ~/.local/src/og-bar/PLAN.md). Same `BarConfig` fields and
-//! the same edge-picker/sliders/module-toggle-list shape as og-bar's own
-//! popout menu (its `src/settings.rs`) — kept structurally identical on
-//! purpose so the two editors can't drift into disagreeing about what a
-//! field means, even though they're separate binaries and can't literally
-//! share one view function today. Unlike the popout (which auto-saves
-//! every change instantly), this tab follows the rest of og-settings:
-//! changes stage in-memory and only hit disk on "Apply & Save".
+//! PLAN.md at ~/.local/src/og-bar/PLAN.md). Structurally mirrors og-bar's
+//! own popout (its `src/settings.rs`) on purpose, including the
+//! section system (percent share + Start/Middle/End alignment, which
+//! reads as Left/Middle/Right or Top/Middle/Bottom depending on the
+//! bar's edge) — kept in sync by hand since they're separate binaries.
+//! Unlike the popout (which auto-saves every change instantly), this tab
+//! follows the rest of og-settings: changes stage in-memory and only hit
+//! disk on "Apply & Save".
 
 use iced::widget::{button, checkbox, column, container, row, text, text_input};
 use iced::{Background, Border, Color, Element, Length};
 
-use og_config::{BarConfig, Edge, ModuleConfig, ModuleKind};
+use og_config::{BarConfig, BarSection, Edge, ModuleKind, SectionAlign};
 
 use crate::app::{AppColors, Message};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BarSection {
-    Start,
-    Center,
-    End,
-}
-
-fn section_list(bar_config: &mut BarConfig, section: BarSection) -> &mut Vec<ModuleConfig> {
-    match section {
-        BarSection::Start => &mut bar_config.modules_start,
-        BarSection::Center => &mut bar_config.modules_center,
-        BarSection::End => &mut bar_config.modules_end,
-    }
-}
-
-pub fn toggle_module(bar_config: &mut BarConfig, section: BarSection, index: usize) {
-    if let Some(m) = section_list(bar_config, section).get_mut(index) {
-        m.enabled = !m.enabled;
-    }
-}
-
-pub fn set_clock_timezone(bar_config: &mut BarConfig, section: BarSection, index: usize, tz: String) {
-    if let Some(m) = section_list(bar_config, section).get_mut(index) {
-        if let ModuleKind::Clock { timezone } = &mut m.kind {
-            *timezone = tz;
-        }
-    }
-}
 
 fn kind_label(kind: &ModuleKind) -> String {
     match kind {
@@ -76,6 +47,22 @@ fn edge_button(colors: AppColors, label: &'static str, edge: Edge, current: Edge
         .into()
 }
 
+fn align_button(colors: AppColors, label: &'static str, align: SectionAlign, current: SectionAlign, section: usize) -> Element<'static, Message> {
+    let selected = align == current;
+    let fg = if selected { colors.bar_bg } else { colors.text };
+    let bg = if selected { colors.accent } else { Color::TRANSPARENT };
+    button(text(label).size(11).style(move |_| text::Style { color: Some(fg) }))
+        .padding([3, 8])
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(bg)),
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            text_color: fg,
+            ..Default::default()
+        })
+        .on_press(Message::BarSetSectionAlign(section, align))
+        .into()
+}
+
 fn labeled_slider(
     colors: AppColors,
     label: &'static str,
@@ -91,9 +78,17 @@ fn labeled_slider(
     .into()
 }
 
-fn module_toggle_row(section: BarSection, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
+fn module_toggle_row(colors: AppColors, section: usize, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
     let label = kind_label(kind);
-    let mut r = row![checkbox(label, enabled).on_toggle(move |_| Message::BarToggleModule(section, index))].spacing(8);
+    let checkbox_widget = checkbox(label, enabled)
+        .on_toggle(move |_| Message::BarToggleModule(section, index))
+        .style(move |_, _| iced::widget::checkbox::Style {
+            background: Background::Color(colors.surface),
+            icon_color: colors.accent,
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            text_color: Some(colors.text),
+        });
+    let mut r = row![checkbox_widget].spacing(8);
     if let ModuleKind::Clock { timezone } = kind {
         r = r.push(
             text_input("IANA tz, e.g. America/Chicago (blank = local)", timezone)
@@ -102,7 +97,102 @@ fn module_toggle_row(section: BarSection, index: usize, kind: &ModuleKind, enabl
                 .on_input(move |v| Message::BarSetClockTimezone(section, index, v)),
         );
     }
+    r = r.push(iced::widget::horizontal_space());
+    r = r.push(
+        button(text("Remove").size(11).style(move |_| text::Style { color: Some(colors.text) }))
+            .padding(4)
+            .style(move |_, status| button::Style {
+                background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                    colors.header_btn_bg
+                } else {
+                    Color::TRANSPARENT
+                })),
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                text_color: colors.text,
+                ..Default::default()
+            })
+            .on_press(Message::BarRemoveModule(section, index)),
+    );
     r.into()
+}
+
+fn add_module_row(colors: AppColors, section: usize, present: &[ModuleKind]) -> Element<'static, Message> {
+    let addable: Vec<Element<Message>> = ModuleKind::addable()
+        .iter()
+        .filter(|k| !present.contains(k))
+        .map(|kind| {
+            let kind = kind.clone();
+            let label = kind_label(&kind);
+            button(text(format!("+ {label}")).size(11).style(move |_| text::Style { color: Some(colors.text) }))
+                .padding([2, 6])
+                .style(move |_, status| button::Style {
+                    background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                        colors.accent
+                    } else {
+                        colors.surface
+                    })),
+                    border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                    text_color: colors.text,
+                    ..Default::default()
+                })
+                .on_press(Message::BarAddModule(section, kind))
+                .into()
+        })
+        .collect();
+    if addable.is_empty() {
+        return iced::widget::Space::new(Length::Shrink, Length::Shrink).into();
+    }
+    row(addable).spacing(4).wrap().into()
+}
+
+fn section_block(colors: AppColors, position: Edge, index: usize, sec: &BarSection) -> Element<'static, Message> {
+    let present: Vec<ModuleKind> = sec.modules.iter().map(|m| m.kind.clone()).collect();
+    let rows: Vec<Element<Message>> = sec
+        .modules
+        .iter()
+        .enumerate()
+        .map(|(i, m)| module_toggle_row(colors, index, i, &m.kind, m.enabled))
+        .collect();
+
+    let align_row = row![
+        align_button(colors, SectionAlign::Start.label(position), SectionAlign::Start, sec.align, index),
+        align_button(colors, SectionAlign::Middle.label(position), SectionAlign::Middle, sec.align, index),
+        align_button(colors, SectionAlign::End.label(position), SectionAlign::End, sec.align, index),
+    ]
+    .spacing(4);
+
+    let remove_section_btn = button(text("Remove section").size(11).style(move |_| text::Style { color: Some(colors.text) }))
+        .padding([2, 6])
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(Color { r: 0.6, g: 0.1, b: 0.1, a: 1.0 })),
+            text_color: Color::WHITE,
+            border: Border { radius: colors.radius.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .on_press(Message::BarRemoveSection(index));
+
+    container(
+        column![
+            row![
+                text(format!("Section {}", index + 1)).size(12).style(move |_| text::Style { color: Some(Color { a: 0.7, ..colors.text }) }),
+                iced::widget::horizontal_space(),
+                remove_section_btn,
+            ]
+            .align_y(iced::Alignment::Center),
+            labeled_slider(colors, "Share", sec.percent, 5..=100, move |v| Message::BarSetSectionPercent(index, v)),
+            align_row,
+            column(rows).spacing(4),
+            add_module_row(colors, index, &present),
+        ]
+        .spacing(8)
+        .padding(10),
+    )
+    .style(move |_| container::Style {
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+        ..Default::default()
+    })
+    .width(Length::Fill)
+    .into()
 }
 
 pub fn view<'a>(bar_config: &'a BarConfig, colors: AppColors) -> Element<'a, Message> {
@@ -122,34 +212,40 @@ pub fn view<'a>(bar_config: &'a BarConfig, colors: AppColors) -> Element<'a, Mes
     ]
     .spacing(10);
 
-    let module_section = |title: &'static str, section: BarSection, list: &'a [ModuleConfig]| -> Element<'a, Message> {
-        column![
-            text(title).size(12).style(move |_| text::Style { color: Some(Color { a: 0.6, ..colors.text }) }),
-            column(
-                list.iter()
-                    .enumerate()
-                    .map(|(i, m)| module_toggle_row(section, i, &m.kind, m.enabled))
-            )
-            .spacing(4),
-        ]
-        .spacing(4)
-        .into()
-    };
+    let add_section_btn = button(text("+ Add section").size(12).style(move |_| text::Style { color: Some(colors.text) }))
+        .padding([4, 10])
+        .style(move |_, status| button::Style {
+            background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
+                colors.accent
+            } else {
+                colors.surface
+            })),
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            text_color: colors.text,
+            ..Default::default()
+        })
+        .on_press(Message::BarAddSection);
 
-    let module_lists = row![
-        module_section("Start", BarSection::Start, &bar_config.modules_start),
-        module_section("Center", BarSection::Center, &bar_config.modules_center),
-        module_section("End", BarSection::End, &bar_config.modules_end),
-    ]
-    .spacing(24);
+    let sections = column(
+        bar_config
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(i, s)| section_block(colors, bar_config.position, i, s))
+            .chain(std::iter::once(add_section_btn.into())),
+    )
+    .spacing(12);
 
     container(
         column![
             text("Bar edge").size(13).style(move |_| text::Style { color: Some(Color { a: 0.7, ..colors.text }) }),
             edge_row,
             sliders,
-            text("Modules").size(13).style(move |_| text::Style { color: Some(Color { a: 0.7, ..colors.text }) }),
-            module_lists,
+            text("Sections").size(13).style(move |_| text::Style { color: Some(Color { a: 0.7, ..colors.text }) }),
+            text("Each section gets a share of the bar's length (not required to sum to 100 — it's a relative split) and packs its modules toward the start, middle, or end of that share.")
+                .size(11)
+                .style(move |_| text::Style { color: Some(Color { a: 0.5, ..colors.text }) }),
+            sections,
             text("og-bar doesn't watch this file yet (PLAN.md section 2) — restart og-bar after Apply & Save to see any change here, not just edge/thickness.")
                 .size(11)
                 .style(move |_| text::Style { color: Some(Color { a: 0.5, ..colors.text }) }),
