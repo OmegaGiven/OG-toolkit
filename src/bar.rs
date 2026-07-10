@@ -350,10 +350,29 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
         }
         Message::ApplyRelayout => {
             let _ = bar.bar_cfg.save();
-            if let Ok(exe) = std::env::current_exe() {
-                let _ = std::process::Command::new(exe).spawn();
+            // ApplyRelayout is only ever triggered from a button *inside*
+            // the settings popup, which was therefore still open/mapped
+            // — killing the process out from under it via a bare
+            // process::exit(0) never gives its Wayland surface a clean
+            // destroy, just an abrupt disconnect. That's a real
+            // candidate for leaving sway's pointer/seat state wedged
+            // for whatever respawns next (matches "popup applies once,
+            // then the reopened one is unresponsive"). Close the popup
+            // properly first (a real RemoveWindow the runtime processes
+            // this frame), and only actually respawn+exit after a short
+            // delay so that close has time to land before the process
+            // dies.
+            let popup_id = bar.popup.take().map(|p| p.id);
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ = std::process::Command::new(exe).spawn();
+                }
+                std::process::exit(0);
+            });
+            if let Some(id) = popup_id {
+                return Task::done(Message::RemoveWindow(id));
             }
-            std::process::exit(0);
         }
         _ => {}
     }

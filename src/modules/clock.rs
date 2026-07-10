@@ -30,11 +30,14 @@ impl Clock {
         Self { timezone, hour12 }
     }
 
-    /// tz abbreviation / date / time, as separate segments so the caller
-    /// can lay them out in a row (top/bottom bar) or a column (left/right
-    /// bar) instead of a single string hardcoded to one direction.
-    fn segments(&self) -> [String; 3] {
-        let fmt = if self.hour12 { "%Z\n%m/%d\n%I:%M %p" } else { "%Z\n%m/%d\n%H:%M" };
+    /// date / time / AM-PM / tz abbreviation, as separate segments — AM/PM
+    /// gets its own segment rather than sharing a line with the time
+    /// (`"%I:%M %p"` as one string) specifically so a narrow vertical bar
+    /// never wraps mid-string and splits "05:32 PM" across two lines at
+    /// an arbitrary point; "05:32" now always stays intact on its own
+    /// line, with "PM" cleanly on the next.
+    fn segments(&self) -> ClockSegments {
+        let fmt = if self.hour12 { "%m/%d\n%I:%M\n%p\n%Z" } else { "%m/%d\n%H:%M\n%Z" };
 
         let explicit_tz = if self.timezone.is_empty() { None } else { self.timezone.parse::<chrono_tz::Tz>().ok() };
 
@@ -42,13 +45,25 @@ impl Clock {
             Some(tz) => chrono::Utc::now().with_timezone(&tz).format(fmt).to_string(),
             None => chrono::Local::now().format(fmt).to_string(),
         };
-        let mut parts = formatted.splitn(3, '\n');
-        [
-            parts.next().unwrap_or_default().to_string(),
-            parts.next().unwrap_or_default().to_string(),
-            parts.next().unwrap_or_default().to_string(),
-        ]
+        let mut parts = formatted.split('\n');
+        let date = parts.next().unwrap_or_default().to_string();
+        let time = parts.next().unwrap_or_default().to_string();
+        if self.hour12 {
+            let ampm = parts.next().unwrap_or_default().to_string();
+            let tz = parts.next().unwrap_or_default().to_string();
+            ClockSegments { date, time, ampm: Some(ampm), tz }
+        } else {
+            let tz = parts.next().unwrap_or_default().to_string();
+            ClockSegments { date, time, ampm: None, tz }
+        }
     }
+}
+
+struct ClockSegments {
+    date: String,
+    time: String,
+    ampm: Option<String>,
+    tz: String,
 }
 
 impl Module for Clock {
@@ -62,12 +77,25 @@ impl Module for Clock {
 
     fn view(&self, colors: AppColors, _size: u32, orientation: Orientation) -> Element<'_, Message> {
         let text_style = move |_: &_| text::Style { color: Some(colors.text) };
-        let segments = self.segments();
-        let widgets = segments.into_iter().map(|s| text(s).size(11).style(text_style).into());
+        let seg = self.segments();
+        let widget = |s: String| -> Element<'_, Message> { text(s).size(11).style(text_style).into() };
 
         let content: Element<'_, Message> = match orientation {
-            Orientation::Horizontal => row(widgets).spacing(6).align_y(iced::Alignment::Center).into(),
-            Orientation::Vertical => column(widgets).align_x(iced::Alignment::Center).into(),
+            // Top/bottom bar: room for one line, natural reading order.
+            Orientation::Horizontal => {
+                let mut parts = vec![widget(seg.date), widget(seg.time)];
+                if let Some(ampm) = seg.ampm { parts.push(widget(ampm)); }
+                parts.push(widget(seg.tz));
+                row(parts).spacing(6).align_y(iced::Alignment::Center).into()
+            }
+            // Left/right bar: date on top, time (always intact, never
+            // sharing a line with AM/PM), AM/PM, timezone at the bottom.
+            Orientation::Vertical => {
+                let mut parts = vec![widget(seg.date), widget(seg.time)];
+                if let Some(ampm) = seg.ampm { parts.push(widget(ampm)); }
+                parts.push(widget(seg.tz));
+                column(parts).align_x(iced::Alignment::Center).into()
+            }
         };
 
         container(content).padding(4).into()
