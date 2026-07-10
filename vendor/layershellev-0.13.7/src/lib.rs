@@ -2561,7 +2561,21 @@ impl<T: 'static> WindowState<T> {
                             let wl_surface = wmcompositer.create_surface(&qh, ());
                             let positioner = wmbase.create_positioner(&qh, ());
                             positioner.set_size(width as i32, height as i32);
-                            positioner.set_anchor_rect(x, y, width as i32, height as i32);
+                            // Anchor rect must be a small region AT the
+                            // click point, not sized to match the popup
+                            // itself — this was set to (width, height),
+                            // meaning the "anchor" spanned from (x, y) to
+                            // (x + width, y + height), and with
+                            // Gravity::BottomRight below the popup then
+                            // grew from THAT far corner instead of from
+                            // the actual click point — compounding into
+                            // the popup rendering roughly (width, height)
+                            // pixels away from where the bar/icon was
+                            // actually clicked, on every edge. A 1x1
+                            // anchor at the real point fixes it (xdg
+                            // positioner protocol requires >=1 on both
+                            // dimensions, hence 1 not 0).
+                            positioner.set_anchor_rect(x, y, 1, 1);
                             // Neither of these was ever called here before this
                             // patch — with no gravity/constraint_adjustment set,
                             // the protocol's default is "none", so the
