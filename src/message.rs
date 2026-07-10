@@ -10,7 +10,6 @@ use crate::power::PowerAction;
 pub enum Message {
     WorkspacesUpdated(Vec<WorkspaceInfo>),
     FocusWorkspace(String),
-    FocusWindow(i64),
     TrayUpdated(Vec<TrayItem>),
     TrayActivate(String),
     Tick,
@@ -42,4 +41,11 @@ pub enum Message {
     OpenWindowMenu(i64, i32),
     WindowMenuClose(i64),
     WindowMenuMoveToWorkspace(i64, i32),
+    // Click-hold-drag an app icon onto another workspace's group to move
+    // it there. Start carries the window's *current* workspace so the
+    // eventual drop can tell "still over where it started" (no-op) apart
+    // from "actually moved somewhere else."
+    WindowDragStart(i64, i32),
+    WorkspaceGroupHovered(i32),
+    WindowDragEnd,
 }

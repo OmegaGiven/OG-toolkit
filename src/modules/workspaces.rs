@@ -199,7 +199,12 @@ impl Module for Workspaces {
                             ..Default::default()
                         }),
                     )
-                    .on_press(Message::FocusWindow(con_id))
+                    // WindowDragStart both focuses (same as the old
+                    // FocusWindow did) and records the drag origin — a
+                    // plain click is just a press+release with no group
+                    // hover change in between, so this is transparent to
+                    // ordinary clicking.
+                    .on_press(Message::WindowDragStart(con_id, ws_num))
                     .on_right_press(Message::OpenWindowMenu(con_id, ws_num))
                     .into()
                 });
@@ -217,13 +222,22 @@ impl Module for Workspaces {
                 // desktop — every workspace gets one (not just the
                 // focused one), so they read as separate groups at a
                 // glance rather than one continuous strip of icons.
-                container(group)
-                    .padding(2)
-                    .style(move |_| container::Style {
-                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
-                        ..Default::default()
-                    })
-                    .into()
+                // Wrapped in a mouse_area so a click-hold-drag from
+                // another workspace's icon can tell it landed here
+                // (WorkspaceGroupHovered) — WindowDragEnd (global button-
+                // release listener in bar.rs) then moves it, unless it's
+                // released back over its own origin workspace.
+                let ws_num = ws.num;
+                mouse_area(
+                    container(group)
+                        .padding(2)
+                        .style(move |_| container::Style {
+                            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                            ..Default::default()
+                        }),
+                )
+                .on_enter(Message::WorkspaceGroupHovered(ws_num))
+                .into()
             })
             .collect();
 

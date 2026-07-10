@@ -73,6 +73,13 @@ pub struct Bar {
     hour12: bool,
     sections: Vec<SectionRuntime>,
     popup: Option<PopupState>,
+    /// Click-hold-drag state for moving an app icon to another
+    /// workspace — (con_id, workspace it started on). No visual
+    /// drop-target highlight for now (Module::view has no way to learn
+    /// this without a trait-wide signature change); this only drives the
+    /// functional move-on-release behavior.
+    drag_origin: Option<(i64, i32)>,
+    hover_ws: Option<i32>,
 }
 
 impl Bar {
@@ -82,7 +89,7 @@ impl Bar {
         let colors = AppColors::from_config(&config, "og-bar");
         let hour12 = config.clock_12h;
         let sections = build_sections(&bar_cfg, hour12);
-        let bar = Self { sections, colors, bar_cfg, hour12, popup: None };
+        let bar = Self { sections, colors, bar_cfg, hour12, popup: None, drag_origin: None, hover_ws: None };
         (bar, Task::none())
     }
 
@@ -117,8 +124,14 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 Message::Tick
             });
         }
-        Message::FocusWindow(con_id) => {
+        Message::WindowDragStart(con_id, origin_ws) => {
             let con_id = *con_id;
+            bar.drag_origin = Some((con_id, *origin_ws));
+            bar.hover_ws = None;
+            // Same focus-on-click behavior FocusWindow used to provide —
+            // a plain click is just a press+release with no group-hover
+            // change in between, so this fires every time regardless of
+            // whether a drag follows.
             return Task::future(async move {
                 let _ = tokio::process::Command::new("swaymsg")
                     .arg(format!("[con_id={con_id}] focus"))
@@ -126,6 +139,25 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                     .await;
                 Message::Tick
             });
+        }
+        Message::WorkspaceGroupHovered(ws_num) => {
+            bar.hover_ws = Some(*ws_num);
+        }
+        Message::WindowDragEnd => {
+            if let Some((con_id, origin_ws)) = bar.drag_origin.take() {
+                if let Some(target_ws) = bar.hover_ws.take() {
+                    if target_ws != origin_ws {
+                        return Task::future(async move {
+                            let _ = tokio::process::Command::new("swaymsg")
+                                .arg(format!("[con_id={con_id}] move to workspace number {target_ws}"))
+                                .output()
+                                .await;
+                            Message::Tick
+                        });
+                    }
+                }
+            }
+            bar.hover_ws = None;
         }
         Message::TrayActivate(address) => {
             let address = address.clone();
@@ -501,10 +533,23 @@ pub fn subscription(bar: &Bar) -> Subscription<Message> {
         Subscription::none()
     };
 
+    // Always-on (not gated on drag_origin) — cheap plain event listener,
+    // no process spawned, and it needs to see the release regardless of
+    // which widget it lands on/is captured by (unlike click_reports_window
+    // above, which specifically wants uncaptured clicks only). A no-op
+    // when no drag is in progress.
+    let window_drag_release = iced::event::listen_with(|event, _status, _id| {
+        if let iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) = event {
+            Some(Message::WindowDragEnd)
+        } else {
+            None
+        }
+    });
+
     Subscription::batch(
         bar.all_modules()
             .map(|m| m.subscription())
-            .chain([escape_closes_popup, click_reports_window, popup_dismiss_on_activity]),
+            .chain([escape_closes_popup, click_reports_window, popup_dismiss_on_activity, window_drag_release]),
     )
 }
 
