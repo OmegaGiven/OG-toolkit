@@ -16,7 +16,15 @@ exec og-notify
 exec og-clip
 exec og-notif-center
 
+# Live-session only (not carried into etc/skel for the installed system):
+# auto-launch the graphical installer, matching how most public live-ISO
+# distros greet a fresh user. liveuser has NOPASSWD wheel sudo, so `sudo`
+# runs headless with no polkit agent needed. install-ogos.sh remains
+# available as a manual/power-user fallback (run from a terminal).
+exec sudo calamares
+
 bindsym $mod+Return exec $term
+bindsym $mod+i exec sudo calamares
 bindsym $mod+d exec og-search-launch
 bindsym $mod+Shift+q kill
 bindsym $mod+Shift+c reload

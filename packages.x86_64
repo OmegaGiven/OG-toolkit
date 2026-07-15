@@ -144,3 +144,13 @@ arch-install-scripts
 parted
 gptfdisk
 e2fsprogs
+
+# --- Graphical installer (phase 5, public-distribution goal) ---
+# calamares itself is AUR-only, built via pkgbuilds/calamares/ into the
+# local [ogos] repo like the OG-suite apps; its own deps (kpmcore,
+# libpwquality, yaml-cpp, qt6-declarative, qt6-svg) are all official
+# extra/ packages, pulled in transitively.
+calamares
+qt6-wayland
+ntfs-3g
+os-prober
