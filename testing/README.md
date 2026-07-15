@@ -87,18 +87,62 @@ Next click is ever silently dropped for a real user too).
    affects pointer button event delivery specifically in a way not yet
    understood.
 
+## Research done, and what's ruled out
+
+Checked whether this is a known issue and whether something better than
+`ydotool` exists for sway specifically:
+
+- **libei / the xdg-desktop-portal `RemoteDesktop` API** — this is the
+  *actual* modern, correct way to inject input on Wayland (it's what
+  remote-desktop tools and cross-compositor test suites are converging
+  on), and `xdg-desktop-portal-wlr` is already in our base image. **Not
+  usable yet**: wlroots itself doesn't implement the libei backend
+  ([swaywm/wlroots#2378](https://github.com/swaywm/wlroots/issues/2378),
+  still open as of this research). Worth revisiting this path once
+  wlroots ships it — it would likely sidestep the whole class of
+  uinput-timing problems below, since events go through the compositor's
+  own protocol instead of a generic kernel HID device.
+- **ydotool's own issue tracker confirms this class of problem is
+  known and common**, not specific to us: documented socket
+  permission/path mismatches between root-run daemons and user
+  clients ([#231](https://github.com/ReimuNotMoe/ydotool/issues/231),
+  [#73](https://github.com/ReimuNotMoe/ydotool/issues/73),
+  [Red Hat bug 2250692](https://bugzilla.redhat.com/show_bug.cgi?id=2250692)),
+  and general reports of clicks/window targeting being unreliable
+  ([LinuxQuestions thread](https://www.linuxquestions.org/questions/linux-software-2/ydotool-anyone-really-succeed-to-make-it-work-4175725009/)).
+  Our socket setup already avoids the documented path-mismatch bug
+  (both daemon and client explicitly point at `/tmp/.ydotool_socket`),
+  so the remaining flakiness isn't that particular known bug — but it
+  confirms ydotool-on-Wayland reliability is a real, acknowledged
+  category of problem, not something uniquely wrong with this setup.
+- **AT-SPI / dogtail** (accessibility-based UI automation — the
+  standard *reliable* approach for GTK apps) has only "limited,
+  unofficially maintained" Qt support via `qt-at-spi`, and GNOME's own
+  Wayland dogtail support (`gnome-ponytail-daemon`) leans on GNOME's
+  remote-desktop portal implementation specifically — not something
+  that carries over to sway/wlroots as-is.
+- **Tried and ruled out** as the cause of the remaining flakiness:
+  cross-SSH-connection timing jitter (single-round-trip move+click, no
+  improvement), instant down+up bundling (explicit separate down/hold/
+  up with 150ms hold, no improvement), insufficient settle time before
+  the click (tried up to 1.5s between move and click, no improvement).
+
 ## Next steps for whoever picks this up
 
-- Try `ydotool click` as explicit `keydown`/`keyup`-equivalent button
-  events with a deliberate 100-200ms hold, instead of the bundled
-  `0xC0` shorthand.
-- Try sending a few incremental relative mouse-motion events ending at
-  the target, instead of one absolute jump, to see if "real motion
-  before the click" is what Qt/wayland wants.
-- Try running Calamares as `liveuser` (no `sudo`) against a
-  passwordless-sudo *inside* Calamares' own privilege-escalation
-  path instead of pre-escalating the whole process, to rule out
-  theory 3.
+- **Revisit libei once wlroots supports it** — likely the real fix,
+  not a workaround. Track swaywm/wlroots#2378.
+- Try incremental *relative* motion samples ending at the target
+  instead of one absolute teleport — not yet tried; the theory that
+  Qt/wayland wants to see real motion (not just a position jump)
+  before treating a press as valid is still open.
+- Try running Calamares as `liveuser` (no `sudo`) with sudo only
+  invoked *inside* Calamares' own privilege-escalation path, to rule
+  out the root/liveuser session-ownership split as a cause.
+- Get a second opinion from the sway/wlroots community (IRC/matrix,
+  or a wlroots issue) with the specific symptom: absolute-position
+  uinput clicks land visually correct (cursor overlaps the widget,
+  window focus is correct per `swaymsg`) but the click event doesn't
+  seem to reach the Qt6 widget's press handler.
 - Whatever fixes it, add a regression case to `test_calamares_install.py`
   that this README's theories can be checked off against.
 
