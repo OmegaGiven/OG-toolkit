@@ -158,3 +158,10 @@ kcrash
 qt6-wayland
 ntfs-3g
 os-prober
+# rsync: real gap, found via an actual failed install run ("Failed to
+# unpack image ... rsync failed with error code 127" == command not
+# found). The unpackfs module shells out to rsync to copy the squashfs
+# contents onto the target -- it was in releng's own package list but
+# got excluded here during the phase-3 curation pass as "rescue-disk
+# bloat" without realizing Calamares itself hard-depends on it.
+rsync
