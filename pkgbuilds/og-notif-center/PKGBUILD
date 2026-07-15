@@ -1,0 +1,24 @@
+# Maintainer: OmegaGiven
+# Built on the dev machine, not inside the archiso chroot — see
+# og-os/OS-PLAN.md phase 2.
+pkgname=og-notif-center
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="OG-toolkit notification history popup"
+arch=('x86_64')
+url="https://github.com/OmegaGiven/og-notif-center"
+license=('unknown')
+depends=('gcc-libs' 'wayland')
+makedepends=('cargo' 'git')
+source=("og-notif-center::git+file://$HOME/.local/src/og-notif-center#branch=master"
+        "OG-toolkit::git+file://$HOME/.local/src/OG-toolkit#branch=main")
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir/og-notif-center"
+  cargo build --release --locked
+}
+
+package() {
+  install -Dm755 "$srcdir/og-notif-center/target/release/og-notif-center" "$pkgdir/usr/bin/og-notif-center"
+}

@@ -89,6 +89,23 @@ just confirm the package list intentionally stays hardware-agnostic
 rather than trimmed to "what this box needs," since the whole point is
 running on a "new or repeat system."
 
+**Gap found and closed:** the base list's "let the kernel pick" logic
+works fine for AMD/Intel (mesa's open stack *is* the driver, nothing to
+choose), but leaves Nvidia hardware on `nouveau` only — a genuinely worse
+experience there (no power management, no CUDA/NVENC) than the
+proprietary driver most Nvidia users actually want, and picking the right
+one (`nvidia-open-dkms` vs `nvidia-dkms` vs an AUR legacy package) by
+generation is exactly the kind of thing that trips up first-time Linux
+users. `scripts/detect-gpu-driver.sh` reads the GPU's PCI ID + chip
+codename (from `lspci -nn`) and recommends/installs the right package:
+AMD/Intel confirmed covered by base, Nvidia mapped by generation (Turing+
+→ `nvidia-open-dkms`, Maxwell/Pascal/Volta → `nvidia-dkms`, Kepler →
+AUR `nvidia-470xx-dkms`, Fermi → AUR `nvidia-390xx-dkms`, older →
+nouveau-only, no proprietary option exists). Tested standalone against
+this machine's AMD card and against synthetic Nvidia codenames spanning
+all five generations. Belongs in phase 4's install script (section 5) as
+a first-boot step, but runs fine standalone today on any Arch box.
+
 ## 3. Proposed repo layout
 
 New repo, e.g. `~/.local/src/og-os/`:
@@ -126,14 +143,14 @@ og-os/
 
 ## 5. Suggested phase order
 
-1. **Inventory freeze** — `pacman -Qqe`/`pacman -Qqm` snapshot committed to the new repo, so there's a concrete starting package list instead of "whatever's on this disk right now."
-2. **PKGBUILDs for the 12 own-repos** — makes them installable/updatable like any other package, independent of the ISO work (useful immediately, even before an ISO exists).
-3. **archiso skeleton** — boots to a live sway session with the package list, no installer yet.
+1. **Inventory freeze** — done. `pacman -Qqe`/`pacman -Qqm` snapshot committed to the new repo, so there's a concrete starting package list instead of "whatever's on this disk right now."
+2. **PKGBUILDs for the 12 own-repos** — done for 9 (`pkgbuilds/`, see its README for the git+file:// sibling-checkout pattern, build order, and known gaps). `og-note` (Tauri, different toolchain) and `og-hotkeys`/`og-wallpaper`/`og-wallpaper-studio` (not in the original base list) deferred.
+3. **archiso skeleton** — boots to a live sway session with the package list, no installer yet. Not started.
 4. **Install script** — partition + pacstrap + airootfs overlay + first-boot systemd preset, run manually from the live session (this is "phase 1" from section 1).
 5. **(Optional, later)** Calamares module if unattended installs for other people become the actual goal.
 
-## 6. Open decisions (need your call before phase 2+)
+## 6. Open decisions — resolved 2026-07-15
 
-- Drop or keep waybar/mako/alacritty configs now that og-bar/og-search exist? (legacy configs found in `~/.config/` — worth auditing which are still live vs dead.)
-- Personal vs. distributable config split — ship your actual `bar-config.json`/hotkeys, or seed defaults and let install re-run og-settings' own onboarding? Recommend defaults + a "restore my config" import step, so the ISO isn't hardcoded to your machine's binding choices.
-- AUR package vendoring (2a option a vs b) — how many of the 17 AUR packages are actually load-bearing for the *desktop experience* (yay, mangohud/gamemode) vs. personal apps (discord, vesktop, brave-bin, gaming launchers) that a distributable OS probably shouldn't force-bundle.
+- Legacy waybar/mako/alacritty configs: **drop**, not carried into `airootfs/etc/skel`.
+- Personal vs. distributable config split: **seed defaults + import step** — ISO ships sane defaults, og-settings onboarding handles pulling in a personal `bar-config.json`/hotkeys afterward, not hardcoded into the image.
+- AUR vendoring scope: **none beyond `yay` itself** in base — matches `BASE-PACKAGES.md`'s existing curation; mangohud/gamemode stay in the future optional gaming group.
