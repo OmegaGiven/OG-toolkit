@@ -149,8 +149,12 @@ e2fsprogs
 # calamares itself is AUR-only, built via pkgbuilds/calamares/ into the
 # local [ogos] repo like the OG-suite apps; its own deps (kpmcore,
 # libpwquality, yaml-cpp, qt6-declarative, qt6-svg) are all official
-# extra/ packages, pulled in transitively.
+# extra/ packages, pulled in transitively. kcrash listed explicitly below
+# — gap found via `ldd`: the AUR PKGBUILD's depends=() doesn't declare
+# it, but the built binary needs libKF6Crash.so.6 and fails to launch at
+# all without it ("error while loading shared libraries").
 calamares
+kcrash
 qt6-wayland
 ntfs-3g
 os-prober
