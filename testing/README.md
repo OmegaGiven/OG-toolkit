@@ -8,6 +8,10 @@ focus routing, and absolute-vs-relative pointer semantics didn't line
 up reliably, and failures were mostly unexplainable from screenshots
 alone.
 
+**Status: working.** Clicking through Calamares' Welcome → Location →
+Keyboard pages is confirmed reliable and reproducible. The root cause
+of the earlier flakiness is understood and fixed (see below).
+
 ## What this is
 
 - `boot-vm.sh` — boots an og-os ISO in qemu with standardized VNC,
@@ -15,136 +19,110 @@ alone.
 - `gui_test.py` — the reusable library: SSH into the guest, install
   `ydotool` there (kernel-level input injection via `/dev/uinput` —
   looks like real hardware to sway, unlike QEMU-monitor synthetic
-  input), and drive it. Also wraps `swaymsg -t get_tree` for real
-  window geometry/focus (ground truth, not a guess from a screenshot)
-  and screenshot capture via the qemu monitor for human review.
+  input), calibrate its pointer, and drive it. Also wraps
+  `swaymsg -t get_tree` for real window geometry/focus (ground truth,
+  not a guess from a screenshot) and screenshot capture via the qemu
+  monitor for human review.
 - `test_calamares_install.py` — a concrete test script that logs in
-  and attempts to click through Calamares' full install flow.
+  and clicks through Calamares' full install flow.
 
-## What's actually proven solid
+## The bug, and the fix (this took a long time to find)
 
-- **SSH + ydotool harness**: reliable. Boots, installs ydotool fresh
-  each run (it's a testing-session dependency, never baked into the
-  production ISO), logs in at the greeter by typing the password —
-  this is real, verified UI state change (confirmed by watching a
-  wrong password produce "Your password is incorrect" on screen, then
-  a real password land in a working sway session).
-- **`swaymsg` ground truth**: reliable. `find_window()` returns exact
-  window rect + focus state — this is how the "Next button is always
-  at a fixed fraction of the window's bottom-right corner" positioning
-  in `calamares_next_button()` was derived and confirmed (cursor
-  visibly lands exactly on the button in every test run).
-- **The coordinate bug, found and fixed**: ydotool's virtual absolute
-  pointer device declares a logical resolution that is **half** the
-  real screen resolution (e.g. 640x400 on a 1280x800 screen), not the
-  real pixel dimensions. Every target coordinate must be halved before
-  sending, or the cursor lands at ~2x the intended position. Confirmed
-  by watching the actual rendered cursor land at ~2x requested
-  coordinates, deriving the 0.5 scale factor, and then verifying the
-  cursor visually overlapping the intended button before trusting a
-  click. This fix is baked into `move()`/`click()` — callers always
-  work in real screen pixels.
-- **Window focus and mouse-move-only interactions**: reliable. Clicking
-  inside a different window (e.g. og-notif-center's search box) does
-  shift sway's window focus correctly and consistently.
+`ydotoold`'s virtual device, as started normally, has **no absolute
+(`EV_ABS`) capability at all** — confirmed via `/proc/bus/input/devices`,
+it's `REL`-only, a plain relative mouse. `ydotoold`'s own
+`--touch-on`/`-T` flag is documented to add `EV_ABS`, but in this
+environment it made the daemon fail to create *any* device at all (no
+socket, nothing) — a dead end, not a fix.
 
-## What's NOT solid yet — the open problem
+So `ydotool mousemove --absolute` was **never operating on a real
+absolute device**. Pointer position is actually determined by relative
+motion run through **libinput's pointer acceleration curve** — and the
+default `adaptive` accel profile distorts movement nonlinearly (small
+moves land close to 1:1, larger jumps land well past where you'd
+expect, and the distortion ratio isn't constant). This is exactly why
+earlier debugging was so confusing: every theory (halved coordinates,
+a fixed 2x scale factor, absolute-device output-mapping) looked
+plausible for a couple of data points and then fell apart on the next
+one — the real distortion is velocity-dependent, not a fixed ratio.
 
-**Clicking an actual button inside Calamares' Qt window does not
-reliably register**, even with:
-- confirmed-correct coordinates (cursor visibly sits exactly on the
-  "Next" button in the screenshot taken immediately after clicking)
-- confirmed window focus (via `swaymsg`, the Calamares window shows
-  `focused: true`)
-- a single SSH round-trip for move+click (ruled out cross-connection
-  timing jitter as the cause)
-- a 0.4s settle delay between the move and the click event
+**The fix**, confirmed live and reproducible:
 
-One click did succeed once, interactively, with a human-paced pause
-(move → screenshot → visually confirm → click, each a separate manual
-step). No combination tried since — including `click_verified()`'s
-tight move-then-click — has reproduced that reliably in a scripted run.
-Symptoms observed: the page never advances (confirmed by screenshot),
-and typed text intended for a later page's form fields sometimes lands
-in whatever widget silently still has focus on the *current* page
-(e.g. a language combobox's type-ahead-select, which switched the
-whole UI to Turkish mid-test — a real, funny, and useful bug report in
-its own right about how easy it is to fat-finger a live install if a
-Next click is ever silently dropped for a real user too).
+1. `swaymsg -t get_inputs`, find the ydotool device's `identifier`
+   (only appears after at least one move/click has happened once).
+2. `swaymsg input <identifier> accel_profile flat`
+3. `swaymsg input <identifier> pointer_accel 0`
+4. Move via a two-step relative sequence: slam far off-screen first
+   (e.g. `-5000,-5000`, clamps to the real (0,0) regardless of current
+   position), then send one plain relative move of exactly the target
+   `(x, y)`. This now lands within a couple of pixels of the true
+   target, reliably, across repeated calls.
 
-**Leading theories, not yet confirmed:**
-1. Qt6's wayland platform plugin may have specific requirements around
-   pointer *enter* events before accepting a button press on a
-   just-hovered widget — a teleporting absolute-position jump (no
-   intermediate motion samples) might not satisfy that, unlike a real
-   mouse dragging across the surface.
-2. ydotool's click may need to be split into explicit down/up events
-   with real time between them (`ydotool click` bundles both in one
-   call) rather than relying on its own internal timing.
-3. Something specific to running Calamares as root (via `sudo env ...`)
-   while the wayland compositor session is owned by `liveuser` — this
-   hasn't broken window rendering, focus, or keyboard input, but maybe
-   affects pointer button event delivery specifically in a way not yet
-   understood.
+All of this is wrapped in `gui_test.py`'s `calibrate_pointer()` and
+`move()`/`click()` — callers just call `click(x, y)` in real screen
+pixels and it works.
 
-## Research done, and what's ruled out
+**How this was actually confirmed**, in order:
+1. Closing a window via its titlebar `×` button worked immediately
+   after calibration — proved the click *mechanism* itself is fine
+   once positioning is exact (before calibration, this failed too,
+   ruling out "Calamares specifically is broken" as a theory).
+2. Clicking Calamares' Next button then worked, landing on Location.
+3. Repeated successfully for Location → Keyboard.
 
-Checked whether this is a known issue and whether something better than
-`ydotool` exists for sway specifically:
+The reason earlier attempts *looked* like they had correct positioning
+(a screenshot showing the cursor seemingly on the button) but still
+missed: the acceleration-curve error was small enough to still look
+right at screenshot resolution, but large enough to miss a tight Qt
+button hit-box while still registering at the coarser "which window
+has focus" level (window-level focus-on-click kept working throughout
+all the earlier failed attempts, which is what made this so
+misleading).
 
-- **libei / the xdg-desktop-portal `RemoteDesktop` API** — this is the
-  *actual* modern, correct way to inject input on Wayland (it's what
-  remote-desktop tools and cross-compositor test suites are converging
-  on), and `xdg-desktop-portal-wlr` is already in our base image. **Not
-  usable yet**: wlroots itself doesn't implement the libei backend
+## `calamares_next_button()` — fixed offset, not a percentage
+
+Calamares' Back/Next/Cancel row sits at a **fixed pixel offset** from
+the window's bottom-right corner — confirmed by measuring it in both a
+640px-wide tiled window and a 1280px-wide full-screen window and
+finding the same offset in both cases, not a proportional fraction.
+Earlier versions of this code used `width * 0.746`-style percentages,
+which is wrong for exactly this reason (a percentage assumes the
+button bar scales with window width; it doesn't, it's right-anchored
+with a constant margin). If Calamares' UI chrome changes and this
+needs recalibrating, measure it with a screenshot crop and pixel-count
+the true offset from the edge — don't guess a percentage.
+
+## What's still unverified
+
+- The Partitions page's "Erase disk" choice and the Users page's field
+  positions in `test_calamares_install.py` use percentage-of-window
+  guesses, not measured pixel offsets like the Next button. They
+  haven't been click-tested yet. If a run doesn't behave as expected
+  on those pages, that's the likely reason — recalibrate them the same
+  way `calamares_next_button()` was derived.
+- A full run through Partitions/Users/Summary/Install/Finish hasn't
+  been done end-to-end yet — only Welcome/Location/Keyboard are
+  confirmed.
+
+## Research done along the way (context for the above)
+
+- **libei / xdg-desktop-portal `RemoteDesktop`** — this is the modern,
+  correct way to inject input on Wayland, and `xdg-desktop-portal-wlr`
+  is already in our base image, but wlroots doesn't implement the
+  libei backend yet
   ([swaywm/wlroots#2378](https://github.com/swaywm/wlroots/issues/2378),
-  still open as of this research). Worth revisiting this path once
-  wlroots ships it — it would likely sidestep the whole class of
-  uinput-timing problems below, since events go through the compositor's
-  own protocol instead of a generic kernel HID device.
-- **ydotool's own issue tracker confirms this class of problem is
-  known and common**, not specific to us: documented socket
-  permission/path mismatches between root-run daemons and user
-  clients ([#231](https://github.com/ReimuNotMoe/ydotool/issues/231),
+  open). Not usable today; worth revisiting once it lands.
+- **ydotool's own issue tracker** confirms unreliability on Wayland is
+  a known, common category of problem generally
+  ([#231](https://github.com/ReimuNotMoe/ydotool/issues/231),
   [#73](https://github.com/ReimuNotMoe/ydotool/issues/73),
-  [Red Hat bug 2250692](https://bugzilla.redhat.com/show_bug.cgi?id=2250692)),
-  and general reports of clicks/window targeting being unreliable
-  ([LinuxQuestions thread](https://www.linuxquestions.org/questions/linux-software-2/ydotool-anyone-really-succeed-to-make-it-work-4175725009/)).
-  Our socket setup already avoids the documented path-mismatch bug
-  (both daemon and client explicitly point at `/tmp/.ydotool_socket`),
-  so the remaining flakiness isn't that particular known bug — but it
-  confirms ydotool-on-Wayland reliability is a real, acknowledged
-  category of problem, not something uniquely wrong with this setup.
-- **AT-SPI / dogtail** (accessibility-based UI automation — the
-  standard *reliable* approach for GTK apps) has only "limited,
-  unofficially maintained" Qt support via `qt-at-spi`, and GNOME's own
-  Wayland dogtail support (`gnome-ponytail-daemon`) leans on GNOME's
-  remote-desktop portal implementation specifically — not something
-  that carries over to sway/wlroots as-is.
-- **Tried and ruled out** as the cause of the remaining flakiness:
-  cross-SSH-connection timing jitter (single-round-trip move+click, no
-  improvement), instant down+up bundling (explicit separate down/hold/
-  up with 150ms hold, no improvement), insufficient settle time before
-  the click (tried up to 1.5s between move and click, no improvement).
-
-## Next steps for whoever picks this up
-
-- **Revisit libei once wlroots supports it** — likely the real fix,
-  not a workaround. Track swaywm/wlroots#2378.
-- Try incremental *relative* motion samples ending at the target
-  instead of one absolute teleport — not yet tried; the theory that
-  Qt/wayland wants to see real motion (not just a position jump)
-  before treating a press as valid is still open.
-- Try running Calamares as `liveuser` (no `sudo`) with sudo only
-  invoked *inside* Calamares' own privilege-escalation path, to rule
-  out the root/liveuser session-ownership split as a cause.
-- Get a second opinion from the sway/wlroots community (IRC/matrix,
-  or a wlroots issue) with the specific symptom: absolute-position
-  uinput clicks land visually correct (cursor overlaps the widget,
-  window focus is correct per `swaymsg`) but the click event doesn't
-  seem to reach the Qt6 widget's press handler.
-- Whatever fixes it, add a regression case to `test_calamares_install.py`
-  that this README's theories can be checked off against.
+  [RH bug 2250692](https://bugzilla.redhat.com/show_bug.cgi?id=2250692)) —
+  though none of those specific reports were this exact acceleration-
+  curve issue; that part seems to have been found here first.
+- **AT-SPI / dogtail** (accessibility-based automation, the reliable
+  approach for GTK) has only unofficial, limited Qt support, and its
+  Wayland story (`gnome-ponytail-daemon`) is GNOME-portal-specific —
+  doesn't carry over to sway/wlroots as-is.
 
 ## Usage
 
@@ -157,6 +135,5 @@ python3 test_calamares_install.py \
     --username testuser --password testpass123 --hostname ogos-test
 ```
 
-Screenshots land in `/tmp/ogos-test-shots/` by default — review them,
-they're the actual ground truth for "what page did we end up on" until
-the click-reliability problem above is solved.
+Screenshots land in `/tmp/ogos-test-shots/` by default — review them
+for the pages not yet confirmed (Partitions onward).

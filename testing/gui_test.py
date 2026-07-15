@@ -3,8 +3,8 @@
 testing (Calamares, or any other graphical app running in the live sway
 session) via qemu + SSH + ydotool.
 
-Why this exists, and the bug it works around
-----------------------------------------------
+Why this exists
+----------------
 Driving a Wayland compositor's GUI from outside a VM is fragile if you
 synthesize input at the QEMU-monitor level (sendkey/mouse_move over the
 VNC/QMP connection) — coordinate systems, focus routing, and absolute-
@@ -16,29 +16,54 @@ drive it over SSH. ydotool injects input at the kernel uinput level, so
 it looks like real hardware to sway — no VNC/QEMU coordinate
 translation involved.
 
-The one real gotcha, found the hard way: ydotool's virtual absolute
-pointer device declares a logical resolution that is HALF the real
-screen resolution (e.g. 640x400 on a 1280x800 screen), not the real
-pixel dimensions. Every `mousemove --absolute` coordinate must be
-halved before sending, or clicks land at ~2x your intended target
-(confirmed by watching the actual rendered cursor position land at
-~2x the requested coordinates, then re-deriving the correct scale
-factor and verifying against a visible cursor overlapping the intended
-button before trusting a click). This module bakes that fix in via
-click()/move() so callers always work in real screen-pixel coordinates.
+THE REAL BUG, finally found (this took a long time to nail down)
+-------------------------------------------------------------------
+`ydotoold`'s virtual device, as started by default, has **no absolute
+(EV_ABS) capability at all** — confirmed via `/proc/bus/input/devices`,
+it's `REL`-only. `ydotoold`'s own `--touch-on`/`-T` flag is supposed to
+add `EV_ABS`, but in practice it made the daemon fail to create *any*
+device at all (no socket, nothing) — a dead end, not a fix.
+
+So `ydotool mousemove --absolute` was never operating on a real
+absolute device to begin with. What actually determines pointer
+position is **relative motion run through libinput's pointer
+acceleration curve** — and the default `adaptive` accel profile
+distorts movement nonlinearly (small moves are close to 1:1, large
+jumps land well past where you'd expect). That's what caused every
+earlier theory (halved coordinates, 2x scaling, absolute-device output
+mapping) to look plausible for a few data points and then fall apart:
+the actual distortion isn't a fixed ratio, it's velocity-dependent.
+
+The fix, confirmed live and reproducible:
+  1. `swaymsg input <ydotool-device-identifier> accel_profile flat`
+  2. `swaymsg input <ydotool-device-identifier> pointer_accel 0`
+  3. Always move via a two-step RELATIVE sequence: first slam far
+     off-screen (e.g. -5000,-5000) to clamp the cursor to a known
+     origin (0,0), then send a plain relative move of exactly
+     (target_x, target_y) — this now lands within a couple of pixels
+     of the true target, reliably, across repeated calls.
+
+Confirmed by: closing a window via its titlebar × button (proves the
+click mechanism itself works once positioning is exact), then
+successfully clicking through Calamares' Welcome → Location → Keyboard
+pages using the identical mechanism. Before this fix, clicks would
+often *look* right in a screenshot (cursor appears to overlap the
+button) but still miss — small acceletation-curve error was enough to
+miss a tight Qt button hit-box while still being "close enough" to
+register at the coarser window-focus level.
 
 Ground truth over pixel-guessing
 ---------------------------------
-Don't infer success from screenshots alone. Use:
+Still true and still useful even with clicks now working reliably:
   - sway_tree() / find_window() — real window geometry + focus state
-    (via `swaymsg -t get_tree`), to know exactly where a window's
-    buttons are (Calamares' Back/Next/Cancel row is a fixed offset
-    from the window's bottom-right corner regardless of tiling
-    position — see calamares_next_button()).
+    (via `swaymsg -t get_tree`) instead of guessing positions from a
+    screenshot.
   - tail_log() / wait_for_log() — if the app being tested writes a log
     (Calamares does, when launched with stdout redirected to a file),
     poll that instead of diffing screenshots to know when a page
-    transition / job actually happened.
+    transition / job actually happened. (In practice, Calamares only
+    logs *some* page transitions, not all — screenshots are still the
+    most complete ground truth for "what page are we on".)
 
 Usage
 -----
@@ -47,10 +72,11 @@ Usage
     g = GuestSession(ssh_port=22223, password="ogos")
     g.wait_for_ssh()
     g.install_ydotool()          # one-time per boot, not baked into the ISO
+    g.calibrate_pointer()        # sets accel_profile flat + pointer_accel 0
     g.login_greeter("ogos")      # types password + Enter at the lightdm greeter
     g.wait_for_sway_socket()
 
-    win = g.find_window("io.calamares.calamares")
+    win = g.wait_for_window("io.calamares.calamares")
     x, y = g.calamares_next_button(win)
     g.click(x, y)
 """
@@ -98,7 +124,11 @@ class GuestSession:
 
     def install_ydotool(self) -> None:
         """ydotool is a testing-session dependency, not something baked
-        into the production ISO — install it fresh each boot."""
+        into the production ISO — install it fresh each boot. Do NOT
+        pass -T/--touch-on to ydotoold: it makes the daemon fail to
+        create any device at all in this environment (see module
+        docstring) — the plain REL-only device plus calibrate_pointer()
+        is the combination that actually works."""
         self.ssh("sudo pacman -Sy --noconfirm ydotool", timeout=60)
         self.ssh("sudo usermod -aG input liveuser")
         self.ssh(
@@ -122,7 +152,36 @@ class GuestSession:
             self.wait_for_sway_socket()
         return self._sway_socket  # type: ignore[return-value]
 
-    # --- input injection (the part that has to be exactly right) ---
+    def calibrate_pointer(self) -> None:
+        """THE fix (see module docstring): sway's default libinput
+        accel_profile ("adaptive") distorts ydotool's relative pointer
+        motion nonlinearly, causing clicks to land close to but not
+        exactly on target — close enough to fool a screenshot check,
+        not close enough to hit a tight Qt button. Setting the profile
+        to "flat" with zero acceleration makes relative motion land
+        within a couple of pixels of the requested delta, reliably.
+        Call this once, after wait_for_sway_socket(), before any
+        click()/move() calls you intend to trust.
+        """
+        r = self.ssh(f"SWAYSOCK={self.sway_socket} swaymsg -t get_inputs")
+        text = r.stdout
+        start = text.find("[")
+        devices = json.loads(text[start:])
+        ydotool_ids = {
+            d["identifier"] for d in devices
+            if "ydotool" in d.get("identifier", "").lower()
+        }
+        if not ydotool_ids:
+            raise RuntimeError(
+                "no ydotool input device found in `swaymsg -t get_inputs` — "
+                "is ydotoold actually running and has a move/click happened "
+                "yet? (the device may not register until first used)"
+            )
+        for ident in ydotool_ids:
+            self.ssh(f"SWAYSOCK={self.sway_socket} swaymsg input '{ident}' accel_profile flat")
+            self.ssh(f"SWAYSOCK={self.sway_socket} swaymsg input '{ident}' pointer_accel 0")
+
+    # --- input injection ---
 
     def _ydotool(self, args: str) -> None:
         r = self.ssh(f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool {args}")
@@ -130,37 +189,34 @@ class GuestSession:
             raise RuntimeError(f"ydotool {args} failed: {r.stderr}")
 
     def move(self, x: int, y: int) -> None:
-        """Move the pointer to a REAL screen pixel coordinate.
+        """Move the pointer to a REAL screen pixel coordinate (origin
+        top-left of the whole output).
 
-        Halves x/y before sending: ydotool's virtual absolute device's
-        logical resolution is half the real screen resolution. Verify
-        this still holds if ydotool/wlroots versions change — confirm
-        by moving to a known button and screenshotting before trusting
-        click() blindly on a new setup (see module docstring).
+        Implementation: slam the cursor to (0,0) via a huge relative
+        jump (clamps at the screen edge regardless of current
+        position), then send one relative move of exactly (x, y).
+        Requires calibrate_pointer() to have been called first, or
+        this will be distorted by libinput's default acceleration
+        curve — see module docstring for why.
         """
-        self._ydotool(f"mousemove --absolute -x {x // 2} -y {y // 2}")
+        cmd = (
+            f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool mousemove -x -5000 -y -5000 && "
+            f"sleep 0.3 && "
+            f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool mousemove -x {x} -y {y}"
+        )
+        r = self.ssh(cmd)
+        if r.returncode != 0:
+            raise RuntimeError(f"move to ({x},{y}) failed: {r.stderr}")
 
     def click(self, x: int, y: int, button: str = "0xC0") -> None:
         """Move to (x, y) in real screen pixels, then click.
         button: 0xC0 = left click (down+up). See `ydotool click --help`
-        for the full bitmask table (right/middle/etc).
-
-        Move and click are sent as ONE ssh round-trip (not two separate
-        connections with a local sleep sandwiched between) — found this
-        matters in practice: two separate self.ssh() calls per click
-        was unreliable (silently missed real UI buttons in a scripted
-        run despite identical coordinates that worked fine when typed
-        interactively with a pause in between), while a single ssh call
-        with a remote `sleep` between the two ydotool invocations was
-        not. Suspect ssh connection-setup jitter between the two calls
-        was occasionally landing the click before the compositor had
-        processed the preceding move. Prefer click_verified() over this
-        for anything that matters — it screenshots after clicking so
-        you have actual evidence, not just hope.
-        """
+        for the full bitmask table (right/middle/etc)."""
         cmd = (
-            f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool mousemove --absolute "
-            f"-x {x // 2} -y {y // 2} && sleep 0.4 && "
+            f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool mousemove -x -5000 -y -5000 && "
+            f"sleep 0.3 && "
+            f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool mousemove -x {x} -y {y} && "
+            f"sleep 0.3 && "
             f"YDOTOOL_SOCKET={self.ydotool_socket} ydotool click {button}"
         )
         r = self.ssh(cmd)
@@ -169,10 +225,11 @@ class GuestSession:
 
     def click_verified(self, x: int, y: int, monitor_port: int, out_path: str,
                         button: str = "0xC0") -> str:
-        """click() then screenshot immediately after — use this instead
-        of bare click() whenever a test needs to actually trust the
-        click landed, rather than assume it. Returns the screenshot
-        path for the caller (or a human) to inspect."""
+        """click() then screenshot immediately after — always worth
+        doing for anything that matters, since a wrong coordinate
+        calibration (e.g. after a window resize) is otherwise silent.
+        Returns the screenshot path for the caller (or a human) to
+        inspect."""
         self.click(x, y, button)
         time.sleep(1)
         self.screenshot(monitor_port, out_path)
@@ -232,9 +289,7 @@ class GuestSession:
 
     def launch_logged(self, command: str, log_path: str = "/tmp/gui_test_app.log") -> None:
         """Launch a command in the live session with stdout/stderr
-        redirected to a file you can poll with wait_for_log() — far
-        more reliable than screenshot diffing for "did the click do
-        anything" verification."""
+        redirected to a file you can poll with wait_for_log()."""
         self.ssh(
             f"sudo setsid sh -c "
             f"'XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 "
@@ -284,15 +339,16 @@ class GuestSession:
 
     @staticmethod
     def calamares_next_button(window: dict) -> tuple[int, int]:
-        """Calamares' Back/Next/Cancel row sits at a fixed offset from
-        the window's bottom-right corner regardless of where the
-        window is tiled on screen — computed from the window rect
-        (ground truth from find_window()) rather than a hardcoded
-        absolute screen position, so it survives different tiling
-        layouts. Offsets calibrated against a 640x778 window; re-check
-        with a screenshot crop if Calamares' UI chrome changes size.
+        """Calamares' Back/Next/Cancel row sits at a FIXED pixel offset
+        from the window's bottom-right corner — the button bar doesn't
+        scale with window width, it's right-anchored with a constant
+        margin (confirmed by measuring it in both a 640px-wide tiled
+        window and a 1280px-wide full-screen window and finding the
+        same ~146px-from-right / ~24px-from-bottom offset in both, not
+        a proportional fraction). Use fixed offsets, not percentages,
+        if you recalibrate this for a UI chrome change.
         """
         rect = window["rect"]
-        x = rect["x"] + int(rect["width"] * 0.746)
-        y = rect["y"] + int(rect["height"] * 0.957)
+        x = rect["x"] + rect["width"] - 146
+        y = rect["y"] + rect["height"] - 24
         return x, y

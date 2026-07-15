@@ -50,6 +50,13 @@ def main():
     g.wait_for_sway_socket(timeout=60)
     print("  sway session up")
 
+    print("== Calibrating pointer (fixes libinput accel-curve click misses) ==")
+    # Needs at least one prior ydotool move/click for the device to show
+    # up in `swaymsg -t get_inputs` -- the greeter login's Enter keypress
+    # doesn't count (no pointer event yet), so do a throwaway move first.
+    g.ssh(f"YDOTOOL_SOCKET={g.ydotool_socket} ydotool mousemove -x 1 -y 1")
+    g.calibrate_pointer()
+
     print("== Waiting for Calamares to auto-launch, then relaunching with logging ==")
     # The seed sway config auto-launches Calamares with no log capture
     # (its stdout goes nowhere). Kill that instance and relaunch via
@@ -66,20 +73,14 @@ def main():
     shot("01-welcome")
 
     def click_next():
-        """Click Next, then confirm the click had *some* effect by
-        checking the log grew — ground truth, not a screenshot guess.
-        Doesn't assert *which* page we're on, just that something
-        happened; screenshots are still taken for human review of
-        exactly where we ended up."""
-        before = g.log_line_count(log_path)
+        """Click Next. Log-growth is NOT a reliable signal here (verified:
+        most page transitions don't log anything) -- screenshots taken
+        after each step are the real evidence of what page we ended up
+        on; review them if a run doesn't behave as expected."""
         w = g.find_window("io.calamares.calamares")
         x, y = g.calamares_next_button(w)
         g.click(x, y)
         time.sleep(2)
-        after = g.log_line_count(log_path)
-        if after <= before:
-            print(f"  WARNING: no new log lines after clicking Next "
-                  f"({before} -> {after}) -- click may have missed")
 
     print("== Welcome -> Location ==")
     click_next()
@@ -95,10 +96,14 @@ def main():
     shot("04-partitions-initial")
 
     # Partitions page: pick "Erase disk" (first radio button / choice).
-    # Position calibrated relative to the window rect, same approach as
-    # calamares_next_button — top choice sits near vertical-center-upper
-    # of the content area. If this misses, screenshot 04 shows exactly
-    # where to recalibrate.
+    # UNVERIFIED coordinates (percentage-of-window-size guess, not
+    # measured from a screenshot crop like calamares_next_button was) --
+    # the Next button fix is confirmed solid, this one hasn't been
+    # click-tested yet. If this misses, screenshot 04 shows exactly
+    # where the real target is; measure it the same way
+    # calamares_next_button's offset was derived (crop + pixel-count,
+    # not a percentage guess) and fix it to a fixed offset if it scales
+    # oddly with window width the same way the Next button did.
     w = g.find_window("io.calamares.calamares")
     rect = w["rect"]
     erase_x = rect["x"] + int(rect["width"] * 0.5)
