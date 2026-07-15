@@ -13,8 +13,16 @@ output * bg #1a1b26 solid_color
 
 exec_always og-bar
 exec og-notify
-exec og-clip
-exec og-notif-center
+# og-clip and og-notif-center are on-demand POPUPS, not background
+# daemons -- launching them bare (`exec og-clip`) just pops an empty
+# window open immediately and sway tiles it into the workspace, which
+# is not what we want at startup. og-bar's own clipboard/notification
+# buttons already spawn these on demand via the *-launch wrappers; the
+# only thing that actually needs to run continuously in the background
+# is wl-paste's watcher, which feeds clip history into og-clip's store
+# without ever showing a window.
+exec wl-paste --type text --watch og-clip --store-text
+exec wl-paste --type image/png --watch og-clip --store-image
 
 # Live-session only (not carried into etc/skel for the installed system):
 # auto-launch the graphical installer, matching how most public live-ISO
@@ -34,6 +42,8 @@ exec sh -c 'sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY="$WAYLAND_DI
 bindsym $mod+Return exec $term
 bindsym $mod+i exec sh -c 'sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY="$WAYLAND_DISPLAY" QT_QPA_PLATFORM=wayland calamares'
 bindsym $mod+d exec og-search-launch
+bindsym $mod+n exec og-notif-center-launch
+bindsym $mod+v exec og-clip
 bindsym $mod+Shift+q kill
 bindsym $mod+Shift+c reload
 bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit sway?' -B 'Yes' 'swaymsg exit'
