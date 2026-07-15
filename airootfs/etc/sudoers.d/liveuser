@@ -1,0 +1,5 @@
+# Live/rescue medium convenience — liveuser is wheel + NOPASSWD here since
+# this is a removable disk with an unset (locked) account password, not a
+# hardened install. Reassess before this convention carries over to an
+# installed system in phase 4.
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL

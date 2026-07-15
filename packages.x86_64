@@ -62,9 +62,17 @@ og-notify
 og-files
 og-links
 og-apps
+og-scripts
 # og-note deferred — Tauri/npm toolchain, no PKGBUILD yet (see pkgbuilds/README.md)
 
 # --- OG suite runtime deps ---
+# mako: gap found while wiring the seed sway config — og-notify/
+# og-notif-center are a themed-effects layer + history browser sitting on
+# top of mako's actual org.freedesktop.Notifications DBus service
+# (og-notify watches DBus calls addressed to mako by its unique bus name,
+# doesn't implement the service itself); notifications don't work at all
+# without it, but it was never in any base group.
+mako
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
 wl-clipboard
@@ -130,3 +138,9 @@ gutenprint
 
 # --- AUR helper (built as its own [ogos] package — yay isn't in official repos) ---
 yay
+
+# --- Install-script requirements (phase 4) ---
+arch-install-scripts
+parted
+gptfdisk
+e2fsprogs
