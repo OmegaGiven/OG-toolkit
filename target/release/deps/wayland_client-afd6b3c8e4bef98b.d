@@ -1,0 +1,10 @@
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/wayland_client-afd6b3c8e4bef98b.d: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/conn.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/event_queue.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/globals.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libwayland_client-afd6b3c8e4bef98b.rlib: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/conn.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/event_queue.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/globals.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libwayland_client-afd6b3c8e4bef98b.rmeta: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/conn.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/event_queue.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/globals.rs
+
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/lib.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/conn.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/event_queue.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wayland-client-0.31.14/src/globals.rs:

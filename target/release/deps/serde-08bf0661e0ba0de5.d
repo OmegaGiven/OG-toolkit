@@ -1,0 +1,14 @@
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/serde-08bf0661e0ba0de5.d: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/omegagiven/.local/src/og-notif-center/target/release/build/serde-2bd0a7e82b312b43/out/private.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libserde-08bf0661e0ba0de5.rlib: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/omegagiven/.local/src/og-notif-center/target/release/build/serde-2bd0a7e82b312b43/out/private.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libserde-08bf0661e0ba0de5.rmeta: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/omegagiven/.local/src/og-notif-center/target/release/build/serde-2bd0a7e82b312b43/out/private.rs
+
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/omegagiven/.local/src/og-notif-center/target/release/build/serde-2bd0a7e82b312b43/out/private.rs:
+
+# env-dep:OUT_DIR=/home/omegagiven/.local/src/og-notif-center/target/release/build/serde-2bd0a7e82b312b43/out
