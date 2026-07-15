@@ -1,7 +1,9 @@
 # Maintainer: OmegaGiven
 # Built on the dev machine, not inside the archiso chroot — see
 # og-os/OS-PLAN.md phase 2. No install.sh existed in-repo; package()
-# written from scratch against Cargo.toml's [[bin]] name.
+# written from scratch against Cargo.toml's [[bin]] name. Sources via
+# rsync from the LIVE working tree, not git — these repos carry
+# uncommitted work a git+file:// clone would silently drop.
 pkgname=og-notify
 pkgver=0.1.0
 pkgrel=1
@@ -10,14 +12,17 @@ arch=('x86_64')
 url="https://github.com/OmegaGiven/OG-notify"
 license=('unknown')
 depends=('gcc-libs' 'wayland')
-makedepends=('cargo' 'git')
-source=("og-notify::git+file://$HOME/.local/src/og-notify#branch=main"
-        "OG-toolkit::git+file://$HOME/.local/src/OG-toolkit#branch=main")
-sha256sums=('SKIP' 'SKIP')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-notify/" "$srcdir/og-notify/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
 
 build() {
   cd "$srcdir/og-notify"
-  cargo build --release --locked
+  cargo build --release
 }
 
 package() {

@@ -62,6 +62,13 @@ Deliberately broad (installs drivers for hardware this box doesn't have)
 — the whole point of a general installer is "new or repeat system,"
 per OS-PLAN.md 2e. Don't trim this to what this machine needs.
 
+### Terminal
+`alacritty` — gap found while writing `packages.x86_64` for the archiso
+build: this doc's own audit note says `$term` in `~/.config/sway/config`
+is `alacritty`, but no group above ever actually listed the package.
+Without it the default sway config's terminal keybind launches nothing
+on a fresh install.
+
 ### Everyday utilities (small, genuinely useful for most desktop users)
 `git` `nano` `vim` `htop` `btop` (btop is a hard dependency — og-settings'
 SysMonitor tab embeds it directly, not optional) `unzip` `wget` `less`

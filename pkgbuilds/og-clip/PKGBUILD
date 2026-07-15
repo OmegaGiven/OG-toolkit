@@ -1,6 +1,8 @@
 # Maintainer: OmegaGiven
 # Built on the dev machine, not inside the archiso chroot — see
-# og-os/OS-PLAN.md phase 2.
+# og-os/OS-PLAN.md phase 2. Sources via rsync from the LIVE working
+# tree, not git — these repos carry uncommitted work a git+file:// clone
+# would silently drop.
 pkgname=og-clip
 pkgver=0.1.0
 pkgrel=1
@@ -9,14 +11,17 @@ arch=('x86_64')
 url="https://github.com/OmegaGiven/og-clip"
 license=('unknown')
 depends=('gcc-libs' 'wayland' 'wl-clipboard')
-makedepends=('cargo' 'git')
-source=("og-clip::git+file://$HOME/.local/src/og-clip#branch=master"
-        "OG-toolkit::git+file://$HOME/.local/src/OG-toolkit#branch=main")
-sha256sums=('SKIP' 'SKIP')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-clip/" "$srcdir/og-clip/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
 
 build() {
   cd "$srcdir/og-clip"
-  cargo build --release --locked
+  cargo build --release
 }
 
 package() {

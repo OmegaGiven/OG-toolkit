@@ -6,7 +6,8 @@
 # Default port is 8080 (unprivileged) via OG_LINKS_PORT in the unit —
 # binary defaults to 80 if unset, which needs cap_net_bind_service or
 # root; not granting that automatically here, see og-os/OS-PLAN.md
-# security note about NOPASSWD/setcap-style privilege grants.
+# security note about NOPASSWD/setcap-style privilege grants. Sources
+# via rsync from the LIVE working tree, not git.
 pkgname=og-links
 pkgver=0.1.0
 pkgrel=1
@@ -15,15 +16,17 @@ arch=('x86_64')
 url="https://github.com/OmegaGiven/OG-links"
 license=('unknown')
 depends=('gcc-libs')
-makedepends=('cargo' 'git')
-source=("og-links::git+file://$HOME/.local/src/galias#branch=main"
-        "og-links.service")
-sha256sums=('SKIP'
-            'SKIP')
+makedepends=('cargo' 'rsync')
+source=("og-links.service")
+sha256sums=('SKIP')
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/galias/" "$srcdir/og-links/"
+}
 
 build() {
   cd "$srcdir/og-links"
-  cargo build --release --locked
+  cargo build --release
 }
 
 package() {

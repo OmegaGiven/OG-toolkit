@@ -3,6 +3,8 @@
 # machine, not inside the archiso chroot — see og-os/OS-PLAN.md phase 2.
 # No install.sh existed in-repo; package() written from scratch against
 # Cargo.toml's [[bin]] name (repo README says app-manager — stale, wrong).
+# Sources via rsync from the LIVE working tree, not git — these repos
+# carry uncommitted work a git+file:// clone would silently drop.
 pkgname=og-apps
 pkgver=0.1.0
 pkgrel=1
@@ -11,14 +13,17 @@ arch=('x86_64')
 url="https://github.com/OmegaGiven/linux-packages"
 license=('unknown')
 depends=('gcc-libs' 'wayland' 'pacman' 'yay' 'flatpak')
-makedepends=('cargo' 'git')
-source=("app-store::git+file://$HOME/.local/src/app-store#branch=main"
-        "OG-toolkit::git+file://$HOME/.local/src/OG-toolkit#branch=main")
-sha256sums=('SKIP' 'SKIP')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/app-store/" "$srcdir/app-store/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
 
 build() {
   cd "$srcdir/app-store"
-  cargo build --release --locked
+  cargo build --release
 }
 
 package() {

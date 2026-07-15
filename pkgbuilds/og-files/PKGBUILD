@@ -4,6 +4,8 @@
 # phase 2. ffmpeg/zip/unzip/tar/alacritty are optional runtime deps
 # (video thumbs, archive ops, terminal spawn) — left out of depends,
 # already covered by base's everyday-utilities group or user config.
+# Sources via rsync from the LIVE working tree, not git — these repos
+# carry uncommitted work a git+file:// clone would silently drop.
 pkgname=og-files
 pkgver=0.1.0
 pkgrel=1
@@ -12,14 +14,17 @@ arch=('x86_64')
 url="https://github.com/OmegaGiven/OG-file-manager"
 license=('unknown')
 depends=('gcc-libs' 'wayland' 'ttf-nerd-fonts-symbols' 'xdg-utils')
-makedepends=('cargo' 'git')
-source=("file-manager::git+file://$HOME/.local/src/file-manager#branch=main"
-        "OG-toolkit::git+file://$HOME/.local/src/OG-toolkit#branch=main")
-sha256sums=('SKIP' 'SKIP')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/file-manager/" "$srcdir/file-manager/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
 
 build() {
   cd "$srcdir/file-manager"
-  cargo build --release --locked
+  cargo build --release
 }
 
 package() {

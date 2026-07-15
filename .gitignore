@@ -1,0 +1,28 @@
+# makepkg build artifacts — rebuildable from each pkgbuilds/<name>/PKGBUILD
+pkgbuilds/*/src/
+pkgbuilds/*/pkg/
+pkgbuilds/*/*.pkg.tar.zst
+pkgbuilds/*/*.pkg.tar.zst.sig
+pkgbuilds/*/*.log
+# rsync-sourced working-tree copies makepkg leaves in the pkgbuild dir itself
+pkgbuilds/*/OG-toolkit/
+pkgbuilds/og-bar/og-bar/
+pkgbuilds/og-settings/sway-control/
+pkgbuilds/og-search/omegagiven-search/
+pkgbuilds/og-clip/og-clip/
+pkgbuilds/og-notif-center/og-notif-center/
+pkgbuilds/og-notify/og-notify/
+pkgbuilds/og-apps/app-store/
+pkgbuilds/og-files/file-manager/
+pkgbuilds/og-links/og-links/
+
+pkgbuilds/yay/yay-*.tar.gz
+
+# local [ogos] pacman repo — regenerate with `repo-add` from pkgbuilds/ output
+local-repo/*.pkg.tar.zst
+local-repo/*.db*
+local-repo/*.files*
+
+# archiso build workspace/output — created by mkarchiso, not source
+/work/
+/out/

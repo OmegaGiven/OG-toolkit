@@ -1,139 +1,132 @@
-alacritty
-alsa-firmware
-alsa-utils
-alvr-bin
-amd-ucode
-android-sdk-cmdline-tools-latest
-android-tools
+# og-os ISO package manifest — consumed directly by mkarchiso.
+# This is the CURATED base list (see BASE-PACKAGES.md for full rationale
+# per group), NOT a snapshot of any one machine. The personal-machine
+# audit-trail snapshot lives in machine-snapshot-packages.x86_64 instead
+# — do not confuse the two, see reference/og-os.md's gotcha note.
+
+# --- Core system ---
 base
 base-devel
-blueman
-bluez
-bluez-utils
-brave-bin
-breeze
-brightnessctl
-brother-hll2300d
-btop
-cargo-about
-clipman
-cmake
-code
-cups
-cups-pdf
-discord
-dnsmasq
-docker
-docker-compose
-dolphin
-efibootmgr
-fish
-flatpak
-foot
-gamemode
-gamescope
-ghostscript
-gimp
-git
-gitea
-github-cli
-godot
-grim
-gsfonts
-gutenprint
-heroic-games-launcher-bin
-htop
-intel-media-driver
-iwd
-jdk17-openjdk
-less
-lib32-gamemode
-lib32-mangohud
-libguestfs
-libva-intel-driver
-libva-utils
-lightdm
-lightdm-gtk-greeter
 linux
 linux-firmware
-lutris
-mako
-mangohud
-mesa-utils
-min-browser-bin
-moonlight-qt
-mpv
-multipath-tools
-nano
-nfs-utils
-npm
-nvm
-obs-studio
-openbsd-netcat
-openssh
-pavucontrol
-pipewire-alsa
-pipewire-jack
-pipewire-pulse
-plasticity-bin
-polkit
-python-protobuf
-qemu-desktop
-qemu-user-static
-qt5ct
-qt6-wayland
-qt6ct
-rustup
-sidequest-bin
-slurp
-smartmontools
-sof-firmware
-sshpass
-steam
+amd-ucode
+intel-ucode
 sudo
+efibootmgr
+
+# --- archiso boot-mode requirements (bios.syslinux / uefi.systemd-boot) ---
+syslinux
+grub
+dosfstools
+mtools
+squashfs-tools
+memtest86+
+memtest86+-efi
+edk2-shell
+
+# --- archiso initramfs requirements (gap found: without these, none of
+# HOOKS=(... archiso archiso_loop_mnt ...) in
+# airootfs/etc/mkinitcpio.conf.d/archiso.conf actually exist, so the
+# initramfs can't find the boot medium at all — "mounting '' on real
+# root" at boot, reproduced locally under qemu, matches the user's UTM
+# report exactly) ---
+mkinitcpio
+mkinitcpio-archiso
+
+# zsh: airootfs/etc/passwd (copied from releng) hardcodes root's login
+# shell as /usr/bin/zsh — without the package, autologin has no shell
+# to exec.
+zsh
+
+# --- Compositor + session ---
 sway
 sway-contrib
 swaybg
 swayidle
 swaylock
-tailscale
-unzip
-usbmuxd
-vde2
-vesktop
-vim
-virt-manager
-virt-viewer
-virtualbox
-virtualbox-guest-iso
-vlc
-vulkan-intel
-vulkan-nouveau
-vulkan-radeon
-vulkan-tools
-wasm-pack
-waybar
-webkit2gtk-4.1
-wget
-wine-staging
-winetricks
-wireguard-tools
-wireless_tools
-wl-clip-persist
-wl-clipboard
-wmenu
-wofi
-xdg-desktop-portal-gtk
+lightdm
+lightdm-gtk-greeter
+polkit
+xorg-xwayland
 xdg-desktop-portal-wlr
+xdg-desktop-portal-gtk
 xdg-utils
-xdotool
+
+# --- OG suite (own [ogos] repo packages) ---
+og-bar
+og-settings
+og-search
+og-clip
+og-notif-center
+og-notify
+og-files
+og-links
+og-apps
+# og-note deferred — Tauri/npm toolchain, no PKGBUILD yet (see pkgbuilds/README.md)
+
+# --- OG suite runtime deps ---
+ttf-nerd-fonts-symbols
+ttf-nerd-fonts-symbols-common
+wl-clipboard
+grim
+slurp
+# alacritty: gap found while writing this list — sway config's $term is
+# alacritty (per BASE-PACKAGES.md's own audit note) but it was never
+# actually added to any base group. Added here as its own line so it's
+# not confused with a GPU/audio/etc group; flagged in BASE-PACKAGES.md.
+alacritty
+
+# --- Audio ---
+pipewire-alsa
+pipewire-jack
+pipewire-pulse
+alsa-utils
+alsa-firmware
+sof-firmware
+
+# --- Bluetooth / network ---
+bluez
+bluez-utils
+iwd
+wireless_tools
+openssh
+tailscale
+wireguard-tools
+
+# --- GPU / hardware breadth (deliberately broad, see OS-PLAN.md 2e) ---
+mesa-utils
+vulkan-tools
+vulkan-intel
+vulkan-radeon
+vulkan-nouveau
+libva-intel-driver
+intel-media-driver
+libva-utils
 xf86-video-amdgpu
 xf86-video-ati
 xf86-video-nouveau
-xorg-server
-xorg-xinit
-xorg-xwayland
-yay
-yay-debug
-yazi
+
+# --- Everyday utilities ---
+git
+nano
+vim
+htop
+btop
+unzip
+wget
+less
+brightnessctl
+smartmontools
 zram-generator
+flatpak
+mpv
+
+# --- Printing ---
+cups
+cups-pdf
+ghostscript
+gsfonts
+gutenprint
+
+# --- AUR helper (built as its own [ogos] package — yay isn't in official repos) ---
+yay
