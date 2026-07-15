@@ -21,10 +21,18 @@ exec og-notif-center
 # distros greet a fresh user. liveuser has NOPASSWD wheel sudo, so `sudo`
 # runs headless with no polkit agent needed. install-ogos.sh remains
 # available as a manual/power-user fallback (run from a terminal).
-exec sudo calamares
+#
+# Plain `sudo calamares` fails: sudo resets the environment, so Qt loses
+# WAYLAND_DISPLAY/XDG_RUNTIME_DIR and falls back to a nonexistent X11
+# display ("qt.qpa.xcb: could not connect to display :0"). `env` (run
+# as root, after sudo escalates) sets them explicitly instead of relying
+# on sudo to pass through the original environment. liveuser's uid is
+# static (1000, see airootfs/etc/passwd) so /run/user/1000 is fixed;
+# WAYLAND_DISPLAY is captured from sway's own env before sudo strips it.
+exec sh -c 'sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY="$WAYLAND_DISPLAY" QT_QPA_PLATFORM=wayland calamares'
 
 bindsym $mod+Return exec $term
-bindsym $mod+i exec sudo calamares
+bindsym $mod+i exec sh -c 'sudo env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY="$WAYLAND_DISPLAY" QT_QPA_PLATFORM=wayland calamares'
 bindsym $mod+d exec og-search-launch
 bindsym $mod+Shift+q kill
 bindsym $mod+Shift+c reload
