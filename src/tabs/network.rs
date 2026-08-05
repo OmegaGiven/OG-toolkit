@@ -57,6 +57,25 @@ pub fn view<'a>(
     let dim = move |t: String| -> Element<'a, Message> {
         text(t).size(12).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }).into()
     };
+    // Three-tier brightness since the shared theme has no dedicated
+    // "warning" color: Connected gets the strongest (accent), Paired-but-
+    // disconnected sits at full text brightness (distinct from both ends),
+    // Not paired gets the dimmest.
+    let bt_status_pill = move |status: &'static str| -> Element<'a, Message> {
+        let color = match status {
+            "Connected" => colors.accent,
+            "Paired" => colors.text,
+            _ => colors.dim_text,
+        };
+        container(text(status).size(11).style(move |_| iced::widget::text::Style { color: Some(color) }))
+            .padding([2, 8])
+            .style(move |_| container::Style {
+                background: Some(Background::Color(color.scale_alpha(0.15))),
+                border: Border { color, width: 1.0, radius: 999.0.into() },
+                ..Default::default()
+            })
+            .into()
+    };
     #[derive(Clone, Copy)]
     enum ActionKind { Plain, Accent, Danger }
     let action_btn = move |label: &'static str, msg: Message, kind: ActionKind| -> Element<'a, Message> {
@@ -248,8 +267,10 @@ pub fn view<'a>(
                 bt_rows.push(
                     row![
                         column![
-                            label(d.name.clone()),
-                            dim(format!("{status} · {}", d.mac)),
+                            row![label(d.name.clone()), bt_status_pill(status)]
+                                .align_y(iced::Alignment::Center)
+                                .spacing(8),
+                            dim(d.mac.clone()),
                         ]
                         .spacing(2)
                         .width(Length::Fill),

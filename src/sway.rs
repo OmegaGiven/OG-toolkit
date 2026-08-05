@@ -516,6 +516,18 @@ pub fn set_waybar_layout(config: &Config) {
     let _ = Command::new("waybar").spawn();
 }
 
+/// Restarts og-bar so edge/thickness/spacing changes in the Bar tab take
+/// effect — og-bar doesn't watch its config file for changes (PLAN.md
+/// section 2), so a kill+relaunch is the only way to apply them today.
+/// Launched via the `scripts/install.sh` install path rather than bare
+/// `og-bar`, since sway's exec environment doesn't include `~/.local/bin`
+/// on PATH (same issue noted in sway-control's own README for other tools).
+pub fn restart_og_bar() {
+    let _ = Command::new("pkill").args(["-x", "og-bar"]).output();
+    let bin = format!("{}/.local/bin/og-bar", home());
+    let _ = Command::new(bin).spawn();
+}
+
 /// Every module's `min-width`/`min-height: Npx;` in style.css hardcodes the
 /// module's cross-axis size — CSS min-size wins over whatever `width`/
 /// `height` we write into waybar's own JSON config, so without this the
@@ -990,6 +1002,25 @@ pub fn set_cursor(theme: &str, size: i32) {
     upsert_sway_config_line("seat seat0 xcursor_theme", &format!("seat seat0 xcursor_theme {theme} {size}"));
 }
 
+pub fn set_focus_follows_mouse(mode: og_config::FocusFollowsMouse) {
+    let value = mode.sway_value();
+    let _ = Command::new("swaymsg").args(["focus_follows_mouse", value]).output();
+    upsert_sway_config_line("focus_follows_mouse", &format!("focus_follows_mouse {value}"));
+}
+
+pub fn set_mouse_warping(mode: og_config::MouseWarping) {
+    let value = mode.sway_value();
+    let _ = Command::new("swaymsg").args(["mouse_warping", value]).output();
+    upsert_sway_config_line("mouse_warping", &format!("mouse_warping {value}"));
+}
+
+pub fn set_keyboard_repeat(rate: i32, delay: i32) {
+    let _ = Command::new("swaymsg").args(["input", "type:keyboard", "repeat_rate", &rate.to_string()]).output();
+    let _ = Command::new("swaymsg").args(["input", "type:keyboard", "repeat_delay", &delay.to_string()]).output();
+    upsert_sway_config_line("input type:keyboard repeat_rate", &format!("input type:keyboard repeat_rate {rate}"));
+    upsert_sway_config_line("input type:keyboard repeat_delay", &format!("input type:keyboard repeat_delay {delay}"));
+}
+
 const NOTIF_FX_EXEC_PREFIX: &str = "exec --no-startup-id ~/.local/bin/og-notify";
 
 /// Only edits the sway config's startup line — whether `og-notify`
@@ -1280,8 +1311,15 @@ pub fn bluetooth_disconnect(mac: &str) {
 /// the sudo-password flows elsewhere in this file.
 pub fn bluetooth_pair(terminal: &str, mac: &str) {
     let term = if terminal.is_empty() { "alacritty" } else { terminal };
+    // bluetoothctl only auto-registers its pairing agent (needed for
+    // PIN/passkey confirmation) inside a genuine interactive session — a
+    // one-shot `bluetoothctl pair MAC` invocation never registers one, so
+    // any device requiring confirmation fails with "No agent available for
+    // request type 2" / "Operation not permitted" even though nothing looks
+    // wrong in the spawned terminal. Piping commands into a single session
+    // with the agent registered first fixes it.
     let script = format!(
-        "bluetoothctl pair {mac} && bluetoothctl trust {mac}; echo; read -rsn1 -p 'Press any key to close...'"
+        "bluetoothctl <<'BTEOF'\nagent on\ndefault-agent\npair {mac}\ntrust {mac}\nquit\nBTEOF\necho; read -rsn1 -p 'Press any key to close...'"
     );
     let _ = Command::new(term).arg("-e").arg("bash").arg("-c").arg(script).spawn();
 }
@@ -1812,10 +1850,32 @@ pub fn import_wallpaper() -> Option<String> {
     dest.to_str().map(|s| s.to_string())
 }
 
-/// Rewrites the sway config's `output * bg` line for either mode and applies
-/// it live via swaymsg — same split as `update_sway_layout`/`reload`.
+/// Opens a file picker for a cursor role's replacement image and builds the
+/// Xcursor shape files for it. Returns the role key so the update handler
+/// can refresh state, plus an error string if anything in the pipeline
+/// failed (dialog cancel is `None`, not an error).
+pub fn import_cursor_role_image(role_key: String) -> Option<(String, Result<(), String>)> {
+    let picked = rfd::FileDialog::new()
+        .add_filter("Cursor image", &["svg", "png"])
+        .pick_file()?;
+    let result = crate::cursor_theme::set_cursor_role_image(&role_key, &picked);
+    Some((role_key, result))
+}
+
+/// Rewrites the sway config's `output * bg` line for whichever mode and
+/// applies it live via swaymsg — same split as `update_sway_layout`/
+/// `reload`. "animated" reuses the solid_color line as a plain fallback
+/// (visible for an instant before og-wallpaper's own Background-layer
+/// surface comes up) and hands the actual rendering off to that process.
 pub fn apply_wallpaper(config: &Config) {
-    let new_line = if config.wallpaper_mode == "color" {
+    // og-wallpaper self-gates on wallpaper_mode at its own startup (see
+    // its main.rs) — killing any running instance here and letting the
+    // exec_always in sway config relaunch it is what actually applies a
+    // mode switch immediately, in either direction, without a full sway
+    // reload.
+    let _ = Command::new("pkill").args(["-9", "-f", "/og-wallpaper$"]).output();
+
+    let new_line = if config.wallpaper_mode == "color" || config.wallpaper_mode == "animated" {
         format!("output * bg {} solid_color", config.wallpaper_color)
     } else if !config.wallpaper_path.is_empty() {
         let fit = if config.wallpaper_fit.is_empty() { "fill" } else { &config.wallpaper_fit };
@@ -1842,6 +1902,13 @@ pub fn apply_wallpaper(config: &Config) {
     let _ = std::fs::write(&config_path, lines.join("\n") + "\n");
 
     let _ = Command::new("swaymsg").arg(&new_line).output();
+
+    if config.wallpaper_mode == "animated" {
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 0.2; ~/.local/bin/og-wallpaper > /tmp/og-wallpaper.log 2>&1 &")
+            .spawn();
+    }
 }
 
 // ── Login screen (LightDM) ──────────────────────────────────────────────
