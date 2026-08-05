@@ -63,12 +63,9 @@ pub fn view<'a>(
     theme_name: &'a str,
     imported_themes: &'a [(String, Config)],
     available_terminals: &'a [String],
-    available_cursor_themes: &'a [String],
     available_browsers: &'a [String],
     available_ai_clis: &'a [String],
     available_wallpapers: &'a [String],
-    has_backlight: bool,
-    brightness: i32,
     module_arrange_mode: bool,
     module_dragging: Option<&'a ModuleDrag>,
 ) -> Element<'a, Message> {
@@ -362,6 +359,7 @@ pub fn view<'a>(
                 handle_color: colors.dim_text,
                 border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
             })
+            .menu_style(crate::app::pick_list_menu_style(colors))
             .width(200),
         ]
         .align_y(iced::Alignment::Center)
@@ -476,6 +474,7 @@ pub fn view<'a>(
                 handle_color: colors.dim_text,
                 border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
             })
+            .menu_style(crate::app::pick_list_menu_style(colors))
             .width(220)
             .into()
     };
@@ -582,142 +581,9 @@ pub fn view<'a>(
     )
     .style(card_style).width(Length::Fill);
 
-    // ── Mouse & cursor ──────────────────────────────────────────────────────
-    let sensitivity_row = {
-        use iced::widget::slider;
-        row![
-            label("Pointer sensitivity"),
-            iced::widget::horizontal_space(),
-            slider(-1.0f32..=1.0f32, config.mouse_sensitivity, Message::MouseSensitivityChanged)
-                .step(0.05)
-                .width(220),
-            container(
-                text(format!("{:+.2}", config.mouse_sensitivity))
-                    .style(move |_| iced::widget::text::Style { color: Some(colors.text) })
-            ).width(50),
-        ]
-        .align_y(iced::Alignment::Center)
-        .spacing(12)
-    };
-
-    let cursor_theme_options: Vec<String> = if available_cursor_themes.is_empty() {
-        vec![config.cursor_theme.clone()]
-    } else {
-        available_cursor_themes.to_vec()
-    };
-    let cursor_theme_row = row![
-        label("Cursor icon theme"),
-        iced::widget::horizontal_space(),
-        pick_list(
-            cursor_theme_options,
-            if config.cursor_theme.is_empty() { None } else { Some(config.cursor_theme.clone()) },
-            Message::CursorThemeChanged,
-        )
-        .style(move |_, _| iced::widget::pick_list::Style {
-            background: Background::Color(colors.surface),
-            text_color: colors.text,
-            placeholder_color: colors.dim_text,
-            handle_color: colors.dim_text,
-            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
-        })
-        .width(200),
-    ]
-    .align_y(iced::Alignment::Center)
-    .spacing(12);
-
-    let mouse_card = container(
-        column![
-            text("Mouse & Cursor").size(15).style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
-            sensitivity_row,
-            cursor_theme_row,
-            row![label("Cursor size (pixels)"), iced::widget::horizontal_space(),
-                spin(config.cursor_size, Message::CursorSizeMinus, Message::CursorSizePlus)]
-                .align_y(iced::Alignment::Center).spacing(12),
-        ]
-        .spacing(16).padding(20),
-    )
-    .style(card_style).width(Length::Fill);
-
-    // ── Brightness ───────────────────────────────────────────────────────
-    let dim_or_text = move |t: &'a str| -> Element<'a, Message> {
-        text(t).style(move |_| iced::widget::text::Style {
-            color: Some(if has_backlight { colors.text } else { colors.dim_text }),
-        }).into()
-    };
-    let disabled_spin_btn = move |label_txt: &'static str| -> Element<'a, Message> {
-        button(text(label_txt).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }))
-            .style(move |_: &_, _| iced::widget::button::Style {
-                background: Some(Background::Color(colors.surface)),
-                text_color: colors.dim_text,
-                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
-                ..Default::default()
-            })
-            .into()
-    };
-    let brightness_row: Element<Message> = row![
-        dim_or_text("Screen brightness"),
-        iced::widget::horizontal_space(),
-        if has_backlight {
-            let el: Element<Message> = row![
-                spin(brightness, Message::BrightnessMinus, Message::BrightnessPlus),
-                text(format!("{brightness}%")).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
-            ].spacing(8).align_y(iced::Alignment::Center).into();
-            el
-        } else {
-            row![
-                disabled_spin_btn("-"),
-                container(text("—").style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }))
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(colors.surface)),
-                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
-                        ..Default::default()
-                    })
-                    .padding([4, 12]),
-                disabled_spin_btn("+"),
-            ].spacing(4).align_y(iced::Alignment::Center).into()
-        },
-    ]
-    .align_y(iced::Alignment::Center)
-    .spacing(12)
-    .into();
-
-    let show_backlight_module = config.modules_left.iter().any(|m| m == "backlight")
-        || config.modules_center.iter().any(|m| m == "backlight")
-        || config.modules_right.iter().any(|m| m == "backlight");
-
-    let mut brightness_col: Vec<Element<Message>> = vec![
-        text("Brightness").size(15).style(move |_| iced::widget::text::Style { color: Some(colors.text) }).into(),
-        brightness_row,
-        row![
-            dim_or_text("Show as taskbar module"),
-            iced::widget::horizontal_space(),
-            toggler(show_backlight_module).on_toggle_maybe(
-                has_backlight.then_some(Message::BrightnessModuleToggled)
-            ),
-        ]
-        .align_y(iced::Alignment::Center)
-        .spacing(12)
-        .into(),
-    ];
-    if !has_backlight {
-        brightness_col.push(
-            text("No backlight device detected — this machine uses external monitors (DDC/OSD), not a controllable panel. Controls stay wired for laptop builds of this same app.")
-                .size(11)
-                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
-                .into()
-        );
-    }
-
-    let brightness_card = container(
-        column(brightness_col)
-        .spacing(16)
-        .padding(20),
-    )
-    .style(card_style)
-    .width(Length::Fill);
-
     // ── Wallpaper ────────────────────────────────────────────────────────
-    let is_image_mode = config.wallpaper_mode != "color";
+    let is_image_mode = config.wallpaper_mode == "image";
+    let is_animated_mode = config.wallpaper_mode == "animated";
     let mode_btn = move |mode: &'static str, current: &'static str| -> Element<'a, Message> {
         let is_active = mode == current;
         let bg = if is_active { colors.accent } else { colors.surface };
@@ -733,7 +599,8 @@ pub fn view<'a>(
             .padding([6, 14])
             .into()
     };
-    let active_mode: &'static str = if is_image_mode { "Image" } else { "Color" };
+    let active_mode: &'static str =
+        if is_image_mode { "Image" } else if is_animated_mode { "Animated" } else { "Color" };
 
     let fit_btn = move |label: &'static str, value: &'static str| -> Element<'a, Message> {
         let is_active = config.wallpaper_fit == value;
@@ -790,6 +657,47 @@ pub fn view<'a>(
 
             column![picker_row, preview].spacing(12).into()
         }
+    } else if is_animated_mode {
+        let themes = og_wallpaper_core::manifest::list_themes();
+        let current = if config.wallpaper_animated_theme.is_empty() {
+            None
+        } else {
+            Some(config.wallpaper_animated_theme.clone())
+        };
+        let theme_row: Element<Message> = if themes.is_empty() {
+            text("No themes yet — open the Studio to filter a photo and mark animated regions.")
+                .size(12)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+                .into()
+        } else {
+            row![
+                text("Theme").style(move |_| iced::widget::text::Style { color: Some(colors.text) }),
+                pick_list(themes, current, Message::WallpaperAnimatedThemeSelected).style(move |_, _| {
+                    iced::widget::pick_list::Style {
+                        text_color: colors.text,
+                        placeholder_color: colors.dim_text,
+                        handle_color: colors.text,
+                        background: Background::Color(colors.surface),
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                    }
+                }),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center)
+            .into()
+        };
+        column![
+            text("Filters any photo into line-art or 2-color artwork in your theme colors, then animates regions you mark (rain, flashing signs, twinkle, wave) — rendered live by og-wallpaper, not a static file.")
+                .size(12)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
+            theme_row,
+            button(text("Open Wallpaper Studio…").size(12).style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                .style(btn_style)
+                .on_press(Message::LaunchWallpaperStudio)
+                .padding([6, 14]),
+        ]
+        .spacing(10)
+        .into()
     } else {
         let swatch_color = hex_to_color(&config.wallpaper_color);
         let is_open = picker_key == Some("wallpaper_color");
@@ -833,6 +741,7 @@ pub fn view<'a>(
             iced::widget::horizontal_space(),
             mode_btn("Image", active_mode),
             mode_btn("Color", active_mode),
+            mode_btn("Animated", active_mode),
         ]
         .align_y(iced::Alignment::Center)
         .spacing(12)
@@ -884,7 +793,7 @@ pub fn view<'a>(
     .style(card_style)
     .width(Length::Fill);
 
-    column![presets_card, colors_card, window_card, taskbar_card, mouse_card, brightness_card, terminal_card, wallpaper_card, greeter_card]
+    column![presets_card, colors_card, window_card, taskbar_card, terminal_card, wallpaper_card, greeter_card]
         .spacing(16)
         .padding(20)
         .into()

@@ -3,13 +3,15 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Local};
 use iced::keyboard;
+use iced::mouse;
 use iced::widget::{button, column, container, row, scrollable, stack, text, text_input, toggler};
 use iced::{
-    Background, Border, Color, Element, Event, Length, Subscription, Task,
+    Background, Border, Color, Element, Event, Length, Shadow, Subscription, Task, Vector,
 };
 
 use crate::audio::{self, AudioSnapshot, AudioTarget};
 use crate::config::Config;
+use crate::cursor_theme;
 use crate::devices;
 use crate::galias;
 use crate::printing;
@@ -39,6 +41,21 @@ const APP_TINT_SEED: &str = "og-settings";
 /// gradient support was) benefits all of them at once instead of needing
 /// the same hand-edit copied into each app's `app.rs`.
 pub use og_theme::AppColors;
+
+/// `pick_list`'s closed control and its opened dropdown menu are two
+/// separate style catalogs (`pick_list::style` vs `menu_style`) — every
+/// pick_list in this app styled only the former, leaving the opened list
+/// on iced's built-in theme default instead of ours. One shared helper so
+/// new pick_lists don't reintroduce the same gap.
+pub fn pick_list_menu_style(colors: AppColors) -> impl Fn(&iced::Theme) -> iced::widget::overlay::menu::Style {
+    move |_theme| iced::widget::overlay::menu::Style {
+        background: Background::Color(colors.surface),
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+        text_color: colors.text,
+        selected_text_color: colors.bar_bg,
+        selected_background: Background::Color(colors.accent),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateSection { Pacman, Aur, Flatpak }
@@ -146,6 +163,9 @@ pub enum Message {
     AudioMuteToggled(AudioTarget, bool),
     AudioSetDefault(AudioTarget),
     AudioProfileSelected(String, String),
+    /// Fires while Output/Input subtab is visible to redraw meter bars from
+    /// the atomics `audio_meter::Meter` threads are already updating.
+    AudioMeterTick,
 
     // Devices tab
     DevicesLoaded(Vec<crate::devices::UsbDevice>, Vec<crate::devices::InputDevice>, Vec<crate::devices::PciDevice>),
@@ -157,8 +177,15 @@ pub enum Message {
     WallpaperModeChanged(String),
     WallpaperImageSelected(String),
     WallpaperUploadStart,
+    WallpaperAnimatedThemeSelected(String),
+    LaunchWallpaperStudio,
     WallpaperUploaded(Option<String>),
     WallpaperFitChanged(String),
+
+    // Mouse & Keyboard — custom cursor images
+    CursorRoleImagePick(String),
+    CursorRoleImported(String, Result<(), String>),
+    CursorRoleReset(String),
 
     // Theme — brightness
     BrightnessMinus,
@@ -205,15 +232,42 @@ pub enum Message {
     BarSetItemSize(u32),
     BarSetSpacing(u32),
     BarSetPadding(u32),
+    // None = All screens (og-bar's original AllScreens behavior).
+    BarSetOutputMode(Option<String>),
+    BarSetAutoHide(bool),
     // section index (position in bar_config.sections), not BarSection::id
     BarToggleModule(usize, usize),
     BarRemoveModule(usize, usize),
     BarAddModule(usize, og_config::ModuleKind),
     BarSetClockTimezone(usize, usize, String),
+    BarSetClockHour12(usize, usize, bool),
+    BarSetClockShowTimezone(usize, usize, bool),
+    BarSetClockShowDate(usize, usize, bool),
     BarAddSection,
     BarRemoveSection(usize),
-    BarSetSectionPercent(usize, u32),
     BarSetSectionAlign(usize, og_config::SectionAlign),
+    // Live preview divider drag — usize is the handle index, between
+    // section[handle] and section[handle+1].
+    BarDividerDragStart(usize),
+    BarDividerCursorMoved(f32, f32),
+    BarDividerDragEnd,
+    // Drag-to-reorder a module chip in the preview. (section, index) pairs
+    // — start captures the module being lifted, over tracks whatever slot
+    // the cursor is currently sitting on top of (updated via each chip's
+    // on_enter, since iced has no drop-target hit-test), end commits the
+    // move using whatever was last hovered.
+    BarModuleDragStart(usize, usize),
+    BarModuleDragOver(usize, usize),
+    BarModuleDragCursorMoved(f32, f32),
+    BarModuleDragEnd,
+    // Drag-to-reorder whole sections by their header. Same shape as the
+    // module drag above, one level up (section index only, no module
+    // index) — the header is the drag handle, the whole card is the
+    // drop target.
+    BarSectionDragStart(usize),
+    BarSectionDragOver(usize),
+    BarSectionDragCursorMoved(f32, f32),
+    BarSectionDragEnd,
 
     // Hotkeys — bindings
     HotkeyStartCapture(usize),
@@ -242,6 +296,12 @@ pub enum Message {
     CursorSizeMinus,
     CursorSizePlus,
     CursorThemeChanged(String),
+    FocusFollowsMouseChanged(og_config::FocusFollowsMouse),
+    MouseWarpingChanged(og_config::MouseWarping),
+    KeyboardRepeatRateMinus,
+    KeyboardRepeatRatePlus,
+    KeyboardRepeatDelayMinus,
+    KeyboardRepeatDelayPlus,
     ColorPickerOpen(String),
     ColorPickerClose,
     ColorWheelChanged(f32, f32),
@@ -278,6 +338,28 @@ pub struct App {
     pub config: Config,
     pub saved_config: Config,
     pub bar_config: BarConfig,
+    // Bar tab's live preview — divider between section[handle] and
+    // section[handle+1] being dragged to redistribute their combined
+    // `percent` share. `bar_drag_frac` accumulates the exact (unrounded)
+    // adjustment against the start snapshot so repeated small mouse moves
+    // don't drift from integer rounding.
+    pub bar_drag_handle: Option<usize>,
+    pub bar_drag_last: Option<f32>,
+    pub bar_drag_start_a: u32,
+    pub bar_drag_start_b: u32,
+    pub bar_drag_total: u32,
+    pub bar_drag_frac: f32,
+    // (section, index) of the module chip currently being dragged, and
+    // whichever slot the cursor last entered while dragging.
+    pub bar_module_drag: Option<(usize, usize)>,
+    pub bar_module_drag_over: Option<(usize, usize)>,
+    // Latest cursor position while a module drag is active — drives the
+    // floating ghost chip so dragging visually tracks the mouse.
+    pub bar_module_drag_pos: Option<iced::Point>,
+    // Same trio, for whole-section reordering by header drag.
+    pub bar_section_drag: Option<usize>,
+    pub bar_section_drag_over: Option<usize>,
+    pub bar_section_drag_pos: Option<iced::Point>,
     pub current_tab: Tab,
     pub history: Vec<HistoryEntry>,
     // Display
@@ -300,9 +382,13 @@ pub struct App {
     pub theme_save_name: String,
     pub available_terminals: Vec<String>,
     pub available_cursor_themes: Vec<String>,
+    pub available_outputs: Vec<String>,
     pub available_browsers: Vec<String>,
     pub available_ai_clis: Vec<String>,
     pub available_wallpapers: Vec<String>,
+    /// Set when a cursor role image import/build fails (bad file, missing
+    /// xcursorgen, etc.) — shown inline in the Mouse & Keyboard tab.
+    pub cursor_import_error: Option<String>,
     /// False on desktops with no real backlight device — brightness controls
     /// stay visible but disabled so the same build works unmodified on a
     /// laptop with a panel to control.
@@ -372,6 +458,9 @@ pub struct App {
     // Audio tab
     pub audio_subtab: AudioSubTab,
     pub audio_snapshot: AudioSnapshot,
+    /// Keyed by device name (sink or source). Live while Audio tab is open
+    /// on the Output/Input subtab; dropping an entry kills its `parec`.
+    pub audio_meters: HashMap<String, crate::audio_meter::Meter>,
 
     // Devices tab
     pub usb_devices: Vec<crate::devices::UsbDevice>,
@@ -425,6 +514,7 @@ impl App {
                 "power" => Some(Tab::Power),
                 "display" => Some(Tab::Display),
                 "theme" => Some(Tab::Theme),
+                "input" => Some(Tab::MouseKeyboard),
                 "bar" => Some(Tab::Bar),
                 "notifications" => Some(Tab::Notifications),
                 // Rest added for og-search's new "search settings" results
@@ -449,6 +539,18 @@ impl App {
                 config,
                 saved_config: saved,
                 bar_config,
+                bar_drag_handle: None,
+                bar_drag_last: None,
+                bar_drag_start_a: 0,
+                bar_drag_start_b: 0,
+                bar_drag_total: 0,
+                bar_drag_frac: 0.0,
+                bar_module_drag: None,
+                bar_module_drag_over: None,
+                bar_module_drag_pos: None,
+                bar_section_drag: None,
+                bar_section_drag_over: None,
+                bar_section_drag_pos: None,
                 current_tab: initial_tab,
                 history: Vec::new(),
                 monitors,
@@ -466,9 +568,11 @@ impl App {
                 theme_save_name: String::new(),
                 available_terminals: terminals,
                 available_cursor_themes: sway::get_available_cursor_themes(),
+                available_outputs: sway::get_outputs(),
                 available_browsers: browsers,
                 available_ai_clis: ai_clis,
                 available_wallpapers: sway::scan_wallpapers(),
+                cursor_import_error: None,
                 has_backlight,
                 brightness,
                 pty_session: None,
@@ -520,6 +624,7 @@ impl App {
 
                 audio_subtab: AudioSubTab::Output,
                 audio_snapshot: AudioSnapshot::default(),
+                audio_meters: HashMap::new(),
 
                 usb_devices: Vec::new(),
                 input_devices: Vec::new(),
@@ -548,6 +653,9 @@ impl App {
                 if self.current_tab == Tab::SysMonitor && t != Tab::SysMonitor {
                     self.pty_session = None;
                     self.term_canvas = None;
+                }
+                if self.current_tab == Tab::Audio && t != Tab::Audio {
+                    self.audio_meters.clear();
                 }
                 self.current_tab = t;
                 if self.current_tab == Tab::Theme {
@@ -647,6 +755,7 @@ impl App {
                 sway::apply_theme(&self.config);
                 save_to_sway_config(&self.hotkey_variables, &self.hotkey_bindings);
                 crate::terminal_theme::apply_terminal_theme(&self.config);
+                sway::restart_og_bar();
             }
 
             Message::Close => {
@@ -958,8 +1067,9 @@ impl App {
             }
 
             // Audio tab
-            Message::AudioSubTabSelected(t) => { self.audio_subtab = t; }
-            Message::AudioSnapshotLoaded(s) => { self.audio_snapshot = s; }
+            Message::AudioSubTabSelected(t) => { self.audio_subtab = t; self.sync_audio_meters(); }
+            Message::AudioMeterTick => {}
+            Message::AudioSnapshotLoaded(s) => { self.audio_snapshot = s; self.sync_audio_meters(); }
             Message::AudioVolumeChanged(target, pct) => {
                 audio::set_volume(&target, pct);
                 self.audio_snapshot = audio::snapshot();
@@ -1029,6 +1139,47 @@ impl App {
                         self.available_wallpapers.push(path);
                         self.available_wallpapers.sort();
                     }
+                }
+            }
+            Message::WallpaperAnimatedThemeSelected(name) => { self.config.wallpaper_animated_theme = name; }
+            Message::LaunchWallpaperStudio => {
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("~/.local/bin/og-wallpaper-studio &")
+                    .spawn();
+            }
+
+            Message::CursorRoleImagePick(role_key) => {
+                return Task::perform(
+                    async move { tokio::task::spawn_blocking(move || sway::import_cursor_role_image(role_key)).await.unwrap_or(None) },
+                    |picked| match picked {
+                        Some((role, result)) => Message::CursorRoleImported(role, result),
+                        None => Message::CursorRoleImported(String::new(), Ok(())),
+                    },
+                );
+            }
+            Message::CursorRoleImported(role_key, result) => {
+                if role_key.is_empty() {
+                    // Dialog was cancelled — nothing to report.
+                } else if let Err(e) = result {
+                    self.cursor_import_error = Some(e);
+                } else {
+                    self.cursor_import_error = None;
+                    if !self.available_cursor_themes.iter().any(|t| t == cursor_theme::CUSTOM_THEME_NAME) {
+                        self.available_cursor_themes.push(cursor_theme::CUSTOM_THEME_NAME.to_string());
+                        self.available_cursor_themes.sort();
+                    }
+                    self.config.cursor_theme = cursor_theme::CUSTOM_THEME_NAME.to_string();
+                    sway::set_cursor(&self.config.cursor_theme, self.config.cursor_size);
+                    let _ = self.config.save();
+                }
+            }
+            Message::CursorRoleReset(role_key) => {
+                if let Err(e) = cursor_theme::reset_cursor_role(&role_key) {
+                    self.cursor_import_error = Some(e);
+                } else {
+                    self.cursor_import_error = None;
+                    sway::set_cursor(&self.config.cursor_theme, self.config.cursor_size);
                 }
             }
 
@@ -1180,6 +1331,13 @@ impl App {
             Message::BarSetItemSize(v) => { self.bar_config.item_size = v; }
             Message::BarSetSpacing(v) => { self.bar_config.spacing = v; }
             Message::BarSetPadding(v) => { self.bar_config.padding = v; }
+            Message::BarSetOutputMode(output) => {
+                self.bar_config.output_mode = match output {
+                    Some(name) => og_config::BarOutputMode::SingleOutput(name),
+                    None => og_config::BarOutputMode::AllScreens,
+                };
+            }
+            Message::BarSetAutoHide(v) => { self.bar_config.auto_hide = v; }
             Message::BarToggleModule(section, index) => {
                 if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
                     m.enabled = !m.enabled;
@@ -1199,8 +1357,29 @@ impl App {
             }
             Message::BarSetClockTimezone(section, index, tz) => {
                 if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
-                    if let og_config::ModuleKind::Clock { timezone } = &mut m.kind {
-                        *timezone = tz;
+                    if let og_config::ModuleKind::Clock { timezone, .. } = &mut m.kind {
+                        *timezone = if tz == "System Default" { String::new() } else { tz };
+                    }
+                }
+            }
+            Message::BarSetClockHour12(section, index, v) => {
+                if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
+                    if let og_config::ModuleKind::Clock { hour12, .. } = &mut m.kind {
+                        *hour12 = v;
+                    }
+                }
+            }
+            Message::BarSetClockShowTimezone(section, index, v) => {
+                if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
+                    if let og_config::ModuleKind::Clock { show_timezone, .. } = &mut m.kind {
+                        *show_timezone = v;
+                    }
+                }
+            }
+            Message::BarSetClockShowDate(section, index, v) => {
+                if let Some(m) = self.bar_config.sections.get_mut(section).and_then(|s| s.modules.get_mut(index)) {
+                    if let og_config::ModuleKind::Clock { show_date, .. } = &mut m.kind {
+                        *show_date = v;
                     }
                 }
             }
@@ -1219,15 +1398,113 @@ impl App {
                     self.bar_config.sections.remove(index);
                 }
             }
-            Message::BarSetSectionPercent(index, percent) => {
-                if let Some(s) = self.bar_config.sections.get_mut(index) {
-                    s.percent = percent;
-                }
-            }
             Message::BarSetSectionAlign(index, align) => {
                 if let Some(s) = self.bar_config.sections.get_mut(index) {
                     s.align = align;
                 }
+            }
+            Message::BarDividerDragStart(handle) => {
+                let a = self.bar_config.sections.get(handle).map(|s| s.percent);
+                let b = self.bar_config.sections.get(handle + 1).map(|s| s.percent);
+                if let (Some(a), Some(b)) = (a, b) {
+                    self.bar_drag_handle = Some(handle);
+                    self.bar_drag_last = None;
+                    self.bar_drag_start_a = a;
+                    self.bar_drag_start_b = b;
+                    self.bar_drag_total = self.bar_config.sections.iter().map(|s| s.percent).sum();
+                    self.bar_drag_frac = 0.0;
+                }
+            }
+            Message::BarDividerCursorMoved(x, y) => {
+                if let Some(handle) = self.bar_drag_handle {
+                    let vertical = matches!(self.bar_config.position, og_config::Edge::Left | og_config::Edge::Right);
+                    let pos = if vertical { y } else { x };
+                    let axis_len = if vertical {
+                        crate::tabs::bar::PREVIEW_LENGTH
+                    } else {
+                        crate::tabs::bar::horizontal_preview_length(self.window_size.width)
+                    };
+                    if let Some(last) = self.bar_drag_last {
+                        let delta_px = pos - last;
+                        self.bar_drag_frac += delta_px * self.bar_drag_total as f32 / axis_len;
+                        let pair_sum = self.bar_drag_start_a + self.bar_drag_start_b;
+                        let new_a = (self.bar_drag_start_a as f32 + self.bar_drag_frac)
+                            .round()
+                            .clamp(1.0, pair_sum.saturating_sub(1) as f32) as u32;
+                        let new_b = pair_sum - new_a;
+                        if let Some(s) = self.bar_config.sections.get_mut(handle) { s.percent = new_a; }
+                        if let Some(s) = self.bar_config.sections.get_mut(handle + 1) { s.percent = new_b; }
+                    }
+                    self.bar_drag_last = Some(pos);
+                }
+            }
+            Message::BarDividerDragEnd => {
+                self.bar_drag_handle = None;
+                self.bar_drag_last = None;
+            }
+            Message::BarModuleDragStart(section, index) => {
+                self.bar_module_drag = Some((section, index));
+                self.bar_module_drag_over = Some((section, index));
+            }
+            Message::BarModuleDragOver(section, index) => {
+                if self.bar_module_drag.is_some() {
+                    self.bar_module_drag_over = Some((section, index));
+                }
+            }
+            Message::BarModuleDragCursorMoved(x, y) => {
+                if self.bar_module_drag.is_some() {
+                    self.bar_module_drag_pos = Some(iced::Point::new(x, y));
+                }
+            }
+            Message::BarModuleDragEnd => {
+                if let (Some((from_s, from_i)), Some((to_s, to_i))) = (self.bar_module_drag, self.bar_module_drag_over) {
+                    let moved = self
+                        .bar_config
+                        .sections
+                        .get_mut(from_s)
+                        .filter(|s| from_i < s.modules.len())
+                        .map(|s| s.modules.remove(from_i));
+                    if let Some(module) = moved {
+                        // Removing from_i shifts everything after it left
+                        // by one — a same-section target past the source
+                        // needs the same correction or it lands one slot
+                        // too far right.
+                        let insert_at = if to_s == from_s && to_i > from_i { to_i - 1 } else { to_i };
+                        if let Some(target) = self.bar_config.sections.get_mut(to_s) {
+                            let insert_at = insert_at.min(target.modules.len());
+                            target.modules.insert(insert_at, module);
+                        }
+                    }
+                }
+                self.bar_module_drag = None;
+                self.bar_module_drag_over = None;
+                self.bar_module_drag_pos = None;
+            }
+            Message::BarSectionDragStart(index) => {
+                self.bar_section_drag = Some(index);
+                self.bar_section_drag_over = Some(index);
+            }
+            Message::BarSectionDragOver(index) => {
+                if self.bar_section_drag.is_some() {
+                    self.bar_section_drag_over = Some(index);
+                }
+            }
+            Message::BarSectionDragCursorMoved(x, y) => {
+                if self.bar_section_drag.is_some() {
+                    self.bar_section_drag_pos = Some(iced::Point::new(x, y));
+                }
+            }
+            Message::BarSectionDragEnd => {
+                if let (Some(from), Some(to)) = (self.bar_section_drag, self.bar_section_drag_over) {
+                    if from != to && from < self.bar_config.sections.len() {
+                        let section = self.bar_config.sections.remove(from);
+                        let insert_at = if to > from { to - 1 } else { to }.min(self.bar_config.sections.len());
+                        self.bar_config.sections.insert(insert_at, section);
+                    }
+                }
+                self.bar_section_drag = None;
+                self.bar_section_drag_over = None;
+                self.bar_section_drag_pos = None;
             }
 
             // Hotkeys — bindings
@@ -1348,6 +1625,36 @@ impl App {
                 self.config.cursor_theme = theme;
                 let _ = self.config.save();
                 sway::set_cursor(&self.config.cursor_theme, self.config.cursor_size);
+            }
+            Message::FocusFollowsMouseChanged(mode) => {
+                self.config.focus_follows_mouse = mode;
+                let _ = self.config.save();
+                sway::set_focus_follows_mouse(mode);
+            }
+            Message::MouseWarpingChanged(mode) => {
+                self.config.mouse_warping = mode;
+                let _ = self.config.save();
+                sway::set_mouse_warping(mode);
+            }
+            Message::KeyboardRepeatRateMinus => {
+                self.config.keyboard_repeat_rate = (self.config.keyboard_repeat_rate - 5).max(5);
+                let _ = self.config.save();
+                sway::set_keyboard_repeat(self.config.keyboard_repeat_rate, self.config.keyboard_repeat_delay);
+            }
+            Message::KeyboardRepeatRatePlus => {
+                self.config.keyboard_repeat_rate += 5;
+                let _ = self.config.save();
+                sway::set_keyboard_repeat(self.config.keyboard_repeat_rate, self.config.keyboard_repeat_delay);
+            }
+            Message::KeyboardRepeatDelayMinus => {
+                self.config.keyboard_repeat_delay = (self.config.keyboard_repeat_delay - 50).max(100);
+                let _ = self.config.save();
+                sway::set_keyboard_repeat(self.config.keyboard_repeat_rate, self.config.keyboard_repeat_delay);
+            }
+            Message::KeyboardRepeatDelayPlus => {
+                self.config.keyboard_repeat_delay += 50;
+                let _ = self.config.save();
+                sway::set_keyboard_repeat(self.config.keyboard_repeat_rate, self.config.keyboard_repeat_delay);
             }
             Message::NotifFxEnabledToggled(v) => {
                 self.config.notif_fx_enabled = v;
@@ -1612,7 +1919,10 @@ impl App {
             scrollable(self.tab_content(colors)).width(Length::Fill).height(Length::Fill).into()
         };
 
-        let body: Element<Message> = row![self.sidebar(colors), content].height(Length::Fill).into();
+        let sidebar_divider = container(iced::widget::Space::new(Length::Fixed(1.0), Length::Fill))
+            .style(move |_| container::Style { background: Some(Background::Color(colors.border)), ..Default::default() });
+
+        let body: Element<Message> = row![self.sidebar(colors), sidebar_divider, content].height(Length::Fill).into();
 
         let main_content: Element<Message> = column![
             self.header(colors),
@@ -1636,8 +1946,56 @@ impl App {
         } else if self.theme_save_open {
             let modal = self.theme_save_modal(colors);
             iced::widget::stack![base, modal].into()
+        } else if let (Some((from_s, from_i)), Some(pos)) = (self.bar_module_drag, self.bar_module_drag_pos) {
+            // Floating chip that tracks the cursor for the duration of a
+            // module drag — makes it read as actually picking the module
+            // up, not just a state change with a highlighted target.
+            let kind_label = self
+                .bar_config
+                .sections
+                .get(from_s)
+                .and_then(|s| s.modules.get(from_i))
+                .map(|m| crate::tabs::bar::kind_label(&m.kind));
+
+            match kind_label {
+                Some(label) => iced::widget::stack![base, drag_ghost(colors, &label, pos)].into(),
+                None => base.into(),
+            }
+        } else if let (Some(from), Some(pos)) = (self.bar_section_drag, self.bar_section_drag_pos) {
+            let label = format!("Section {}", from + 1);
+            iced::widget::stack![base, drag_ghost(colors, &label, pos)].into()
         } else {
             base.into()
+        }
+    }
+
+    /// Spawns/kills `audio_meter::Meter`s so exactly the devices on the
+    /// currently visible Output/Input subtab have a live meter running.
+    fn sync_audio_meters(&mut self) {
+        let want: Vec<(String, String)> = if self.current_tab != Tab::Audio {
+            Vec::new()
+        } else {
+            match self.audio_subtab {
+                AudioSubTab::Output => self
+                    .audio_snapshot
+                    .sinks
+                    .iter()
+                    .map(|d| (d.name.clone(), format!("{}.monitor", d.name)))
+                    .collect(),
+                AudioSubTab::Input => {
+                    self.audio_snapshot.sources.iter().map(|d| (d.name.clone(), d.name.clone())).collect()
+                }
+                _ => Vec::new(),
+            }
+        };
+
+        self.audio_meters.retain(|k, _| want.iter().any(|(key, _)| key == k));
+        for (key, source) in want {
+            if !self.audio_meters.contains_key(&key) {
+                if let Some(m) = crate::audio_meter::spawn(&source) {
+                    self.audio_meters.insert(key, m);
+                }
+            }
         }
     }
 
@@ -1650,6 +2008,14 @@ impl App {
                 iced::time::every(std::time::Duration::from_secs(2))
                     .map(|_| Message::AudioSnapshotLoaded(audio::snapshot())),
             )
+        } else {
+            None
+        };
+
+        let audio_meter_poll = if self.current_tab == Tab::Audio
+            && matches!(self.audio_subtab, AudioSubTab::Output | AudioSubTab::Input)
+        {
+            Some(iced::time::every(std::time::Duration::from_millis(33)).map(|_| Message::AudioMeterTick))
         } else {
             None
         };
@@ -1708,11 +2074,57 @@ impl App {
             None
         };
 
+        let bar_drag = if self.bar_drag_handle.is_some() {
+            Some(iced::event::listen_with(|event, _status, _id| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Message::BarDividerCursorMoved(position.x, position.y))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Message::BarDividerDragEnd)
+                }
+                _ => None,
+            }))
+        } else {
+            None
+        };
+
+        let bar_module_drag = if self.bar_module_drag.is_some() {
+            Some(iced::event::listen_with(|event, _status, _id| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Message::BarModuleDragCursorMoved(position.x, position.y))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Message::BarModuleDragEnd)
+                }
+                _ => None,
+            }))
+        } else {
+            None
+        };
+
+        let bar_section_drag = if self.bar_section_drag.is_some() {
+            Some(iced::event::listen_with(|event, _status, _id| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Message::BarSectionDragCursorMoved(position.x, position.y))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Message::BarSectionDragEnd)
+                }
+                _ => None,
+            }))
+        } else {
+            None
+        };
+
         let mut subs = vec![monitor_timer, resize_events];
         if let Some(p) = pty_poll { subs.push(p); }
         if let Some(k) = kb { subs.push(k); }
         if let Some(t) = term_kb { subs.push(t); }
+        if let Some(m) = bar_module_drag { subs.push(m); }
+        if let Some(s) = bar_section_drag { subs.push(s); }
         if let Some(a) = audio_poll { subs.push(a); }
+        if let Some(a) = audio_meter_poll { subs.push(a); }
+        if let Some(d) = bar_drag { subs.push(d); }
         Subscription::batch(subs)
     }
 
@@ -2059,6 +2471,7 @@ impl App {
             handle_color: c.dim_text,
             border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
         })
+        .menu_style(pick_list_menu_style(c))
         .width(160)
         .into();
         push("Theme", "Default terminal".into(), "terminal emulator alacritty foot".into(), terminal_pick);
@@ -2106,6 +2519,7 @@ impl App {
                 handle_color: c.dim_text,
                 border: Border { color: c.border, width: 1.0, radius: colors.radius.into() },
             })
+            .menu_style(pick_list_menu_style(c))
             .width(180)
             .into()
         };
@@ -2153,6 +2567,8 @@ impl App {
                 self.arrange_scale,
                 &self.arrange_positions,
                 self.arrange_dragging.as_ref().map(|(n, _, _)| n.as_str()),
+                self.has_backlight,
+                self.brightness,
             ),
             Tab::Network => tabs::network::view(
                 colors,
@@ -2193,20 +2609,27 @@ impl App {
                 &self.theme_name,
                 &self.imported_themes,
                 &self.available_terminals,
-                &self.available_cursor_themes,
                 &self.available_browsers,
                 &self.available_ai_clis,
                 &self.available_wallpapers,
-                self.has_backlight,
-                self.brightness,
                 self.module_arrange_mode,
                 self.module_dragging.as_ref(),
             ),
-            Tab::Bar => tabs::bar::view(&self.bar_config, colors),
+            Tab::MouseKeyboard => tabs::mouse_keyboard::view(&self.config, colors, &self.available_cursor_themes, self.cursor_import_error.as_deref()),
+            Tab::Bar => tabs::bar::view(
+                &self.bar_config,
+                colors,
+                self.bar_module_drag,
+                self.bar_module_drag_over,
+                self.bar_section_drag,
+                self.bar_section_drag_over,
+                self.window_size.width,
+                &self.available_outputs,
+            ),
             Tab::Search => tabs::search::view(&self.config, colors),
             Tab::History => tabs::history::view(&self.history, colors),
             Tab::SysMonitor => tabs::sysmon::view(colors, self.term_canvas.as_ref()),
-            Tab::Audio => tabs::audio::view(colors, self.audio_subtab, &self.audio_snapshot),
+            Tab::Audio => tabs::audio::view(colors, self.audio_subtab, &self.audio_snapshot, &self.audio_meters),
             Tab::Printing => tabs::printing::view(colors, self.cups_running, &self.printers, &self.detected_printers),
             Tab::Devices => tabs::devices::view(
                 colors,
@@ -2525,6 +2948,28 @@ fn dark_preset() -> Config {
         urgent_color: "#ff4444".into(),
         ..Config::default()
     }
+}
+
+/// Floating pill that tracks the cursor during a Bar-tab drag (module chip
+/// or section header) — shared between both so they read as the same kind
+/// of interaction instead of two different drag feels.
+fn drag_ghost<'a>(colors: AppColors, label: &str, pos: iced::Point) -> Element<'a, Message> {
+    container(
+        container(text(label.to_string()).size(12).style(move |_| iced::widget::text::Style { color: Some(colors.bar_bg) }))
+            .padding([5, 12])
+            .style(move |_| container::Style {
+                background: Some(Background::Color(colors.accent)),
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                shadow: Shadow { color: Color { a: 0.4, ..Color::BLACK }, offset: Vector::new(0.0, 3.0), blur_radius: 10.0 },
+                ..Default::default()
+            }),
+    )
+    // Offset a little from the cursor so the chip doesn't sit directly
+    // under it and block the view of what's beneath.
+    .padding(iced::Padding { top: (pos.y - 10.0).max(0.0), left: (pos.x + 14.0).max(0.0), right: 0.0, bottom: 0.0 })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn light_preset() -> Config {

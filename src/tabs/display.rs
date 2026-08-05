@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use iced::widget::{button, canvas, column, container, row, stack, text};
+use iced::widget::{button, canvas, column, container, row, stack, text, toggler};
 use iced::{Background, Border, Color, Element, Length, Padding, Pixels, Rectangle, Renderer, Theme};
 use iced::widget::canvas::{Frame, Geometry};
 use iced::mouse;
@@ -217,13 +217,15 @@ impl<'a> canvas::Program<Message> for ArrangeCanvas<'a> {
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 pub fn view<'a>(
-    _config: &'a Config,
+    config: &'a Config,
     colors: AppColors,
     monitors: &'a [MonitorInfo],
     arrange_mode: bool,
     arrange_scale: f32,
     arrange_positions: &'a HashMap<String, (f32, f32)>,
     dragging_name: Option<&'a str>,
+    has_backlight: bool,
+    brightness: i32,
 ) -> Element<'a, Message> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
@@ -409,7 +411,104 @@ pub fn view<'a>(
         .style(card_style).width(Length::Fill).into()
     }).collect();
 
+    // ── Brightness ───────────────────────────────────────────────────────
+    let dim_or_text = move |t: &'a str| -> Element<'a, Message> {
+        text(t).style(move |_| iced::widget::text::Style {
+            color: Some(if has_backlight { colors.text } else { colors.dim_text }),
+        }).into()
+    };
+    let disabled_spin_btn = move |label_txt: &'static str| -> Element<'a, Message> {
+        button(text(label_txt).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }))
+            .style(move |_: &_, _| iced::widget::button::Style {
+                background: Some(Background::Color(colors.surface)),
+                text_color: colors.dim_text,
+                border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                ..Default::default()
+            })
+            .into()
+    };
+    let spin = move |value: i32, minus: Message, plus: Message| -> Element<'a, Message> {
+        row![
+            button(text("-").style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                .style(btn_style).on_press(minus),
+            container(text(value.to_string()).style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(colors.surface)),
+                    border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                    ..Default::default()
+                })
+                .padding([4, 12]),
+            button(text("+").style(move |_| iced::widget::text::Style { color: Some(colors.text) }))
+                .style(btn_style).on_press(plus),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+    let brightness_row: Element<Message> = row![
+        dim_or_text("Screen brightness"),
+        iced::widget::horizontal_space(),
+        if has_backlight {
+            let el: Element<Message> = row![
+                spin(brightness, Message::BrightnessMinus, Message::BrightnessPlus),
+                text(format!("{brightness}%")).style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }),
+            ].spacing(8).align_y(iced::Alignment::Center).into();
+            el
+        } else {
+            row![
+                disabled_spin_btn("-"),
+                container(text("—").style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) }))
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(colors.surface)),
+                        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+                        ..Default::default()
+                    })
+                    .padding([4, 12]),
+                disabled_spin_btn("+"),
+            ].spacing(4).align_y(iced::Alignment::Center).into()
+        },
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(12)
+    .into();
+
+    let show_backlight_module = config.modules_left.iter().any(|m| m == "backlight")
+        || config.modules_center.iter().any(|m| m == "backlight")
+        || config.modules_right.iter().any(|m| m == "backlight");
+
+    let mut brightness_col: Vec<Element<Message>> = vec![
+        text("Brightness").size(15).style(move |_| iced::widget::text::Style { color: Some(colors.text) }).into(),
+        brightness_row,
+        row![
+            dim_or_text("Show as taskbar module"),
+            iced::widget::horizontal_space(),
+            toggler(show_backlight_module).on_toggle_maybe(
+                has_backlight.then_some(Message::BrightnessModuleToggled)
+            ),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(12)
+        .into(),
+    ];
+    if !has_backlight {
+        brightness_col.push(
+            text("No backlight device detected — this machine uses external monitors (DDC/OSD), not a controllable panel. Controls stay wired for laptop builds of this same app.")
+                .size(11)
+                .style(move |_| iced::widget::text::Style { color: Some(colors.dim_text) })
+                .into()
+        );
+    }
+
+    let brightness_card = container(
+        column(brightness_col)
+        .spacing(16)
+        .padding(20),
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
     let mut all: Vec<Element<Message>> = vec![arrangement_card.into()];
     all.extend(monitor_cards);
+    all.push(brightness_card.into());
     column(all).spacing(16).padding(20).into()
 }

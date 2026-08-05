@@ -52,6 +52,16 @@ pub fn load_and_seed() -> Config {
         if let Some(accel) = read_sway_pointer_accel() {
             cfg.mouse_sensitivity = accel;
         }
+        if let Some(mode) = read_sway_focus_follows_mouse() {
+            cfg.focus_follows_mouse = mode;
+        }
+        if let Some(mode) = read_sway_mouse_warping() {
+            cfg.mouse_warping = mode;
+        }
+        if let Some((rate, delay)) = read_sway_keyboard_repeat() {
+            cfg.keyboard_repeat_rate = rate;
+            cfg.keyboard_repeat_delay = delay;
+        }
     }
     if cfg.wallpaper_path.is_empty() {
         if let Some((value, is_solid_color, fit)) = read_sway_wallpaper() {
@@ -126,6 +136,44 @@ fn read_sway_pointer_accel() -> Option<f32> {
         }
     }
     None
+}
+
+fn read_sway_focus_follows_mouse() -> Option<og_config::FocusFollowsMouse> {
+    let path = dirs_home().join(".config/sway/config");
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        if let Some(rest) = line.trim().strip_prefix("focus_follows_mouse ") {
+            return og_config::FocusFollowsMouse::from_sway_value(rest.trim());
+        }
+    }
+    None
+}
+
+fn read_sway_mouse_warping() -> Option<og_config::MouseWarping> {
+    let path = dirs_home().join(".config/sway/config");
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        if let Some(rest) = line.trim().strip_prefix("mouse_warping ") {
+            return og_config::MouseWarping::from_sway_value(rest.trim());
+        }
+    }
+    None
+}
+
+fn read_sway_keyboard_repeat() -> Option<(i32, i32)> {
+    let path = dirs_home().join(".config/sway/config");
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut rate = None;
+    let mut delay = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("input type:keyboard repeat_rate ") {
+            rate = rest.trim().parse().ok();
+        } else if let Some(rest) = trimmed.strip_prefix("input type:keyboard repeat_delay ") {
+            delay = rest.trim().parse().ok();
+        }
+    }
+    Some((rate?, delay?))
 }
 
 fn read_waybar_module_lists() -> Option<(Vec<String>, Vec<String>, Vec<String>)> {

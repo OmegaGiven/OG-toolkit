@@ -1,8 +1,10 @@
 mod app;
 mod audio;
+mod audio_meter;
 mod color_wheel;
 mod devices;
 mod config;
+mod cursor_theme;
 mod galias;
 mod printing;
 mod pty;

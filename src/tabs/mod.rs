@@ -4,6 +4,7 @@ pub mod devices;
 pub mod display;
 pub mod history;
 pub mod hotkeys;
+pub mod mouse_keyboard;
 pub mod network;
 pub mod notifications;
 pub mod power;
@@ -22,6 +23,7 @@ pub enum Tab {
     Updates,
     Hotkeys,
     Theme,
+    MouseKeyboard,
     Bar,
     History,
     SysMonitor,
@@ -44,6 +46,7 @@ impl Tab {
             Tab::Updates,
             Tab::Hotkeys,
             Tab::Theme,
+            Tab::MouseKeyboard,
             Tab::Bar,
             Tab::Search,
             Tab::Notifications,
@@ -60,6 +63,7 @@ impl Tab {
             Tab::Updates => "Updates",
             Tab::Hotkeys => "Hotkeys",
             Tab::Theme => "Theme",
+            Tab::MouseKeyboard => "Mouse & Keyboard",
             Tab::Bar => "Bar",
             Tab::History => "History",
             Tab::SysMonitor => "System Monitor",
