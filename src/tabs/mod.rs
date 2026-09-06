@@ -1,3 +1,4 @@
+pub mod ai_context;
 pub mod audio;
 pub mod bar;
 pub mod devices;
@@ -20,6 +21,7 @@ pub enum Tab {
     Power,
     Display,
     Network,
+    AiContext,
     Updates,
     Hotkeys,
     Theme,
@@ -40,6 +42,7 @@ impl Tab {
             Tab::Power,
             Tab::Display,
             Tab::Network,
+            Tab::AiContext,
             Tab::Audio,
             Tab::Devices,
             Tab::Printing,
@@ -60,6 +63,7 @@ impl Tab {
             Tab::Power => "Power",
             Tab::Display => "Display",
             Tab::Network => "Network",
+            Tab::AiContext => "AI Context",
             Tab::Updates => "Updates",
             Tab::Hotkeys => "Hotkeys",
             Tab::Theme => "Theme",

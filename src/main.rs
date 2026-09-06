@@ -1,3 +1,5 @@
+mod ai_context;
+mod ai_skills;
 mod app;
 mod audio;
 mod audio_meter;
@@ -8,9 +10,13 @@ mod cursor_theme;
 mod galias;
 mod printing;
 mod pty;
+mod soundstage;
+mod surround;
 mod sway;
 mod tabs;
 mod terminal_theme;
+mod voice_config;
+mod voice_history;
 mod vpn;
 
 use app::App;

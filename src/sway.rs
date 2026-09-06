@@ -757,6 +757,42 @@ pub fn set_monitor_mode(output_name: &str, mode: &str) {
         .output();
 }
 
+/// Persists one output's mode + position into `~/.config/sway/config` so
+/// the layout survives `swaymsg reload` and the next login. Live
+/// `swaymsg output ... pos` calls alone don't stick: any `output <name>
+/// ... position` line in the config is re-applied on every reload and
+/// silently wins. Replaces the existing line for this output (matched on
+/// name, so a stale `output DP-3 ...` is left untouched and a new line is
+/// added for the live name), or inserts after the last `output` line.
+pub fn persist_output_layout(output_name: &str, mode: &str, x: i32, y: i32) {
+    let config_path = format!("{}/.config/sway/config", home());
+    let Ok(content) = std::fs::read_to_string(&config_path) else { return };
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    let mut new_line = format!("output {}", output_name);
+    if !mode.is_empty() {
+        new_line.push_str(&format!(" mode {}", mode));
+    }
+    new_line.push_str(&format!(" position {},{}", x, y));
+
+    let is_ours = |l: &str| {
+        let t = l.trim_start();
+        let mut parts = t.split_whitespace();
+        parts.next() == Some("output") && parts.next() == Some(output_name) && !t.contains(" bg ")
+    };
+
+    if let Some(line) = lines.iter_mut().find(|l| is_ours(l)) {
+        *line = new_line;
+    } else {
+        let idx = lines.iter().rposition(|l| l.trim_start().starts_with("output "));
+        match idx {
+            Some(i) => lines.insert(i + 1, new_line),
+            None => lines.push(new_line),
+        }
+    }
+    let _ = std::fs::write(&config_path, lines.join("\n") + "\n");
+}
+
 #[derive(Debug, Clone)]
 pub struct SystemdServiceInfo {
     pub unit: String,

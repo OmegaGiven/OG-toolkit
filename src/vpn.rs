@@ -77,11 +77,17 @@ pub fn tailscale_status() -> TailscaleStatus {
         return TailscaleStatus { installed: true, ..Default::default() };
     };
 
+    // All peers, not just exit-node-capable ones — the Network tab's exit
+    // node picker filters on `exit_node_option` itself when rendering
+    // (see network.rs), but this is also the one place that queries live
+    // tailnet peers at all, so the AI Context tab (which wants every
+    // machine on the tailnet, not just exit-node candidates) reuses this
+    // same function/list instead of re-parsing `tailscale status --json`
+    // a second time.
     let mut peers: Vec<TailscalePeer> = raw
         .peer
         .unwrap_or_default()
         .into_values()
-        .filter(|p| p.exit_node_option)
         .map(|p| TailscalePeer {
             hostname: p.hostname,
             ip: p.ips.first().cloned().unwrap_or_default(),

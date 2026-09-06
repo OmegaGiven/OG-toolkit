@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Local};
@@ -132,6 +132,36 @@ pub enum Message {
     VpnSetPartial(String),
     VpnAppRouteToggled(String, String, bool),
 
+    // AI Context tab
+    /// Staged toggle for `voice_config.allow_execution` — written to
+    /// og-voice's `voice-config.json` on Apply & Save, same as every
+    /// other setting on this tab.
+    AiAllowExecutionToggled(bool),
+    AiContextNotesEdited(iced::widget::text_editor::Action),
+    AiContextHostNotesChanged(usize, String),
+    AiContextHostRemove(usize),
+    AiContextAddFromTailnet(String, String),
+    AiContextAddNameChanged(String),
+    AiContextAddAddressChanged(String),
+    AiContextAddNotesChanged(String),
+    AiContextAddSubmit,
+
+    // AI Context tab — Skills
+    AiSkillsToggleExpand(usize),
+    AiSkillsDescriptionChanged(usize, String),
+    AiSkillsBodyEdited(usize, iced::widget::text_editor::Action),
+    AiSkillsRemove(usize),
+    AiSkillsAddNameChanged(String),
+    AiSkillsAddDescriptionChanged(String),
+    AiSkillsAddBodyEdited(iced::widget::text_editor::Action),
+    AiSkillsAddSubmit,
+
+    // AI Context tab — History card (read-only, plus prune actions)
+    AiVoiceHistoryToggleExpand(usize),
+    AiVoiceHistoryClearAll,
+    AiVoiceHistoryKeepInputChanged(String),
+    AiVoiceHistoryKeepSubmit,
+
     // Printing tab
     PrintingDataLoaded(bool, Vec<crate::printing::Printer>, Vec<crate::printing::DetectedDevice>),
     PrintingCupsToggled(bool),
@@ -163,9 +193,27 @@ pub enum Message {
     AudioMuteToggled(AudioTarget, bool),
     AudioSetDefault(AudioTarget),
     AudioProfileSelected(String, String),
+    /// "Hear yourself" toggle for a given source — starts (or, if already
+    /// active for this exact source, stops) a mic-to-speakers loopback.
+    AudioMicMonitorToggled(String),
     /// Fires while Output/Input subtab is visible to redraw meter bars from
     /// the atomics `audio_meter::Meter` threads are already updating.
     AudioMeterTick,
+
+    // Audio tab → Spatial subtab (experimental headphone surround lab)
+    SpatialStereo,
+    SpatialMono,
+    SpatialSurround,
+    SpatialPresetSelected(crate::surround::Preset),
+    /// result of applying a mode off the UI thread
+    SpatialApplied(Result<crate::surround::Mode, String>),
+    SpatialStreamsLoaded(Vec<crate::surround::StreamInfo>),
+    SpatialTest(crate::surround::TestSignal),
+    SpatialTestStop,
+    /// Spatial subtab → localization soundstage
+    SpatialStageMode(bool), // false = free play, true = guess-the-direction test
+    SpatialStageClick(u8),  // a direction marker was clicked
+    SpatialGameNext,        // play a new hidden direction
 
     // Devices tab
     DevicesLoaded(Vec<crate::devices::UsbDevice>, Vec<crate::devices::InputDevice>, Vec<crate::devices::PciDevice>),
@@ -332,6 +380,38 @@ pub enum Message {
     ArrangeDragEnd,
 }
 
+// ── AI Context tab — Skills draft state ─────────────────────────────────────
+//
+// Pairs a `crate::ai_skills::AiSkill` (the plain-string on-disk shape)
+// with the `iced` editor state its multi-line body needs while being
+// edited, plus a UI-only expand/collapse flag. Lives here rather than in
+// `ai_skills.rs` since that module is kept iced-free (pure file I/O).
+pub struct AiSkillDraft {
+    pub name: String,
+    pub description: String,
+    pub body: iced::widget::text_editor::Content,
+    pub expanded: bool,
+}
+
+impl AiSkillDraft {
+    pub fn from_skill(s: &crate::ai_skills::AiSkill) -> Self {
+        Self {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            body: iced::widget::text_editor::Content::with_text(&s.body),
+            expanded: false,
+        }
+    }
+
+    pub fn to_skill(&self) -> crate::ai_skills::AiSkill {
+        crate::ai_skills::AiSkill {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            body: self.body.text(),
+        }
+    }
+}
+
 // ── App ────────────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -435,6 +515,39 @@ pub struct App {
     pub vpn_add_name: String,
     pub vpn_add_conf_text: String,
 
+    // AI Context tab — staged in-memory, written to voice-config.json
+    // (og-voice's own file — see `voice_config.rs`) only on Apply & Save,
+    // same convention as everything else on this tab.
+    pub voice_config: crate::voice_config::VoiceConfig,
+
+    // AI Context tab — staged in-memory, written to ai-context.json only
+    // on Apply & Save (same convention as `config`/`saved_config` above).
+    pub ai_context: crate::ai_context::AiContext,
+    pub ai_context_notes: iced::widget::text_editor::Content,
+    pub ai_context_add_name: String,
+    pub ai_context_add_address: String,
+    pub ai_context_add_notes: String,
+
+    // AI Context tab — Skills, staged in-memory, resynced to
+    // `~/.config/sway-power/.claude/skills/*/SKILL.md` only on Apply &
+    // Save (see `ai_skills.rs`).
+    pub ai_skills: Vec<AiSkillDraft>,
+    pub ai_skills_add_name: String,
+    pub ai_skills_add_description: String,
+    pub ai_skills_add_body: iced::widget::text_editor::Content,
+
+    // AI Context tab — History card. Read-only, reloaded fresh from
+    // `~/.config/sway-power/voice-history.jsonl` every time the tab is
+    // opened (see `Message::TabSelected`) rather than staged like the
+    // cards above — it's a log viewer, not an editable setting.
+    pub ai_voice_history: Vec<crate::voice_history::VoiceHistoryEntry>,
+    /// Indices (into `ai_voice_history`) of rows currently expanded.
+    /// Resets on every reload, same as `ai_skills`' `expanded` flag would
+    /// if this were staged state — fine for a log viewer.
+    pub ai_voice_history_expanded: HashSet<usize>,
+    /// Text in the "Keep last N" prune input, e.g. "200".
+    pub ai_voice_history_keep_input: String,
+
     // Printing tab
     pub cups_running: bool,
     pub printers: Vec<crate::printing::Printer>,
@@ -461,6 +574,36 @@ pub struct App {
     /// Keyed by device name (sink or source). Live while Audio tab is open
     /// on the Output/Input subtab; dropping an entry kills its `parec`.
     pub audio_meters: HashMap<String, crate::audio_meter::Meter>,
+    /// "Hear yourself" toggle on the Input subtab — (source name, pactl
+    /// module-loopback index). Unlike audio_meters' `parec` children, a
+    /// pactl module lives in the audio server, not this process, so it
+    /// must be explicitly unloaded (see sync_audio_meters and this
+    /// struct's Drop impl) or it keeps looping mic-to-speakers forever
+    /// after the tab/app closes.
+    pub mic_monitor: Option<(String, u32)>,
+
+    // Audio tab → Spatial subtab
+    pub spatial_mode: crate::surround::Mode,
+    /// HRIR preset to use when the user switches to Virtual surround
+    pub spatial_preset: crate::surround::Preset,
+    pub spatial_error: Option<String>,
+    pub spatial_streams: Vec<crate::surround::StreamInfo>,
+    /// HRTF sink is configured AND is the live default output (not bypassed
+    /// by the user switching devices on the Output subtab)
+    pub spatial_active: bool,
+    /// real sink to route through / fall back to, captured when the tab opens
+    pub spatial_hw_sink: String,
+    /// PID of a running test tone, so it can be stopped / cleaned up
+    pub spatial_test: Option<u32>,
+    /// localization soundstage
+    pub stage_test_mode: bool,
+    pub stage_reveal: Option<u8>,
+    pub stage_guess: Option<u8>,
+    pub game_target: Option<u8>,
+    pub game_hits: u32,
+    pub game_rounds: u32,
+    /// true while an apply() task is in flight — suppresses re-entrancy
+    pub spatial_busy: bool,
 
     // Devices tab
     pub usb_devices: Vec<crate::devices::UsbDevice>,
@@ -477,11 +620,33 @@ pub struct ModuleDrag {
     pub cursor_y: f32,
 }
 
+// Best-effort final backstop for the mic monitor loopback: the TabSelected
+// and sync_audio_meters cleanups above cover every normal way of leaving
+// the Input subtab, but if the process is killed outright while it's still
+// active this is the last chance to unload the pactl module before it's
+// orphaned in the audio server, silently looping mic-to-speakers forever.
+// Not guaranteed to run (winit/iced's event loop teardown can bypass Rust
+// drop glue on some backends), same caveat the audio_meters' parec
+// children already live with — better than nothing, not a substitute for
+// the explicit cleanups.
+impl Drop for App {
+    fn drop(&mut self) {
+        if let Some((_, idx)) = self.mic_monitor.take() {
+            audio::stop_mic_monitor(idx);
+        }
+        if let Some(pid) = self.spatial_test.take() {
+            crate::surround::stop(pid);
+        }
+    }
+}
+
 impl App {
     pub fn new() -> (Self, Task<Message>) {
         let config = crate::config::load_and_seed();
         let saved = config.clone();
         let bar_config = BarConfig::load();
+        let ai_context = crate::ai_context::AiContext::load();
+        let voice_config = crate::voice_config::VoiceConfig::load();
         let hotkeys = load_sway_bindings();
         let variables = load_sway_variables();
         let monitors = sway::get_monitor_info();
@@ -511,6 +676,7 @@ impl App {
             .and_then(|i| std::env::args().nth(i + 1))
             .and_then(|name| match name.as_str() {
                 "network" => Some(Tab::Network),
+                "ai-context" => Some(Tab::AiContext),
                 "power" => Some(Tab::Power),
                 "display" => Some(Tab::Display),
                 "theme" => Some(Tab::Theme),
@@ -614,6 +780,22 @@ impl App {
                 vpn_add_name: String::new(),
                 vpn_add_conf_text: String::new(),
 
+                voice_config,
+                ai_context_notes: iced::widget::text_editor::Content::with_text(&ai_context.general_notes),
+                ai_context,
+                ai_context_add_name: String::new(),
+                ai_context_add_address: String::new(),
+                ai_context_add_notes: String::new(),
+
+                ai_skills: crate::ai_skills::load_all().iter().map(AiSkillDraft::from_skill).collect(),
+                ai_skills_add_name: String::new(),
+                ai_skills_add_description: String::new(),
+                ai_skills_add_body: iced::widget::text_editor::Content::new(),
+
+                ai_voice_history: Vec::new(),
+                ai_voice_history_expanded: HashSet::new(),
+                ai_voice_history_keep_input: "200".to_string(),
+
                 cups_running: false,
                 printers: Vec::new(),
                 detected_printers: Vec::new(),
@@ -625,6 +807,25 @@ impl App {
                 audio_subtab: AudioSubTab::Output,
                 audio_snapshot: AudioSnapshot::default(),
                 audio_meters: HashMap::new(),
+                mic_monitor: None,
+
+                spatial_mode: crate::surround::current(),
+                spatial_preset: match crate::surround::current() {
+                    crate::surround::Mode::Surround(p) => p,
+                    _ => crate::surround::Preset::Atmos,
+                },
+                spatial_error: None,
+                spatial_streams: Vec::new(),
+                spatial_active: false,
+                stage_test_mode: false,
+                stage_reveal: None,
+                stage_guess: None,
+                game_target: None,
+                game_hits: 0,
+                game_rounds: 0,
+                spatial_hw_sink: String::new(),
+                spatial_test: None,
+                spatial_busy: false,
 
                 usb_devices: Vec::new(),
                 input_devices: Vec::new(),
@@ -656,6 +857,12 @@ impl App {
                 }
                 if self.current_tab == Tab::Audio && t != Tab::Audio {
                     self.audio_meters.clear();
+                    if let Some((_, idx)) = self.mic_monitor.take() {
+                        audio::stop_mic_monitor(idx);
+                    }
+                    if let Some(pid) = self.spatial_test.take() {
+                        crate::surround::stop(pid);
+                    }
                 }
                 self.current_tab = t;
                 if self.current_tab == Tab::Theme {
@@ -679,14 +886,46 @@ impl App {
                 if self.current_tab == Tab::Network {
                     return Task::batch([load_network_data(), load_vpn_data(), load_galias_data()]);
                 }
+                if self.current_tab == Tab::AiContext {
+                    // History card: read-only, reloaded fresh from disk
+                    // every time this tab is opened (og-voice is the only
+                    // writer, appending after each session — see
+                    // `voice_history.rs`). Synchronous file read, same as
+                    // `AiContext::load()` in `App::new()`, so no need to
+                    // route it through a `Task` like the peer query below.
+                    self.ai_voice_history = crate::voice_history::load_recent(200);
+                    self.ai_voice_history_expanded.clear();
+                    // Reuses the same live-peer query the Network tab's
+                    // Tailscale section uses (`vpn::tailscale_status`) —
+                    // this tab wants every peer, not just exit-node
+                    // candidates, which is why that function was changed
+                    // to stop pre-filtering (see vpn.rs).
+                    return load_vpn_data();
+                }
                 if self.current_tab == Tab::Updates {
                     return load_update_status();
                 }
                 if self.current_tab == Tab::Audio {
-                    return Task::perform(
-                        async { tokio::task::spawn_blocking(audio::snapshot).await.unwrap_or_default() },
-                        Message::AudioSnapshotLoaded,
-                    );
+                    // Spatial subtab: recover the mode from disk (another
+                    // tool or a previous session may have changed it) and
+                    // remember the real sink to fall back to.
+                    self.spatial_mode = crate::surround::current();
+                    self.spatial_preset = match self.spatial_mode {
+                        crate::surround::Mode::Surround(p) => p,
+                        _ => self.spatial_preset,
+                    };
+                    self.spatial_hw_sink = crate::surround::hardware_default();
+                    self.spatial_active = crate::surround::is_active();
+                    return Task::batch([
+                        Task::perform(
+                            async { tokio::task::spawn_blocking(audio::snapshot).await.unwrap_or_default() },
+                            Message::AudioSnapshotLoaded,
+                        ),
+                        Task::perform(
+                            async { tokio::task::spawn_blocking(crate::surround::active_streams).await.unwrap_or_default() },
+                            Message::SpatialStreamsLoaded,
+                        ),
+                    ]);
                 }
                 if self.current_tab == Tab::Printing {
                     return Task::perform(
@@ -747,6 +986,11 @@ impl App {
             Message::ApplyAndSave => {
                 let _ = self.config.save();
                 let _ = self.bar_config.save();
+                self.ai_context.general_notes = self.ai_context_notes.text();
+                let _ = self.ai_context.save();
+                let _ = self.voice_config.save();
+                let skills: Vec<crate::ai_skills::AiSkill> = self.ai_skills.iter().map(AiSkillDraft::to_skill).collect();
+                let _ = crate::ai_skills::save_all(&skills);
                 self.history.push(HistoryEntry {
                     timestamp: Local::now(),
                     snapshot: self.config.clone(),
@@ -1000,6 +1244,119 @@ impl App {
                 self.split_apps = vpn::list_split_apps();
             }
 
+            // AI Context tab — staged in-memory only, see ApplyAndSave for
+            // where `ai_context.save()` actually runs.
+            Message::AiAllowExecutionToggled(v) => {
+                self.voice_config.allow_execution = v;
+            }
+            Message::AiContextNotesEdited(action) => {
+                self.ai_context_notes.perform(action);
+            }
+            Message::AiContextHostNotesChanged(idx, v) => {
+                if let Some(h) = self.ai_context.hosts.get_mut(idx) {
+                    h.notes = v;
+                }
+            }
+            Message::AiContextHostRemove(idx) => {
+                if idx < self.ai_context.hosts.len() {
+                    self.ai_context.hosts.remove(idx);
+                }
+            }
+            Message::AiContextAddFromTailnet(name, ip) => {
+                if !self.ai_context.hosts.iter().any(|h| h.name == name) {
+                    self.ai_context.hosts.push(crate::ai_context::AiContextHost {
+                        name,
+                        address: ip,
+                        notes: String::new(),
+                        from_tailnet: true,
+                    });
+                }
+            }
+            Message::AiContextAddNameChanged(v) => { self.ai_context_add_name = v; }
+            Message::AiContextAddAddressChanged(v) => { self.ai_context_add_address = v; }
+            Message::AiContextAddNotesChanged(v) => { self.ai_context_add_notes = v; }
+            Message::AiContextAddSubmit => {
+                let name = self.ai_context_add_name.trim().to_string();
+                if !name.is_empty() && !self.ai_context.hosts.iter().any(|h| h.name == name) {
+                    self.ai_context.hosts.push(crate::ai_context::AiContextHost {
+                        name,
+                        address: self.ai_context_add_address.trim().to_string(),
+                        notes: self.ai_context_add_notes.trim().to_string(),
+                        from_tailnet: false,
+                    });
+                    self.ai_context_add_name.clear();
+                    self.ai_context_add_address.clear();
+                    self.ai_context_add_notes.clear();
+                }
+            }
+
+            // AI Context tab — Skills, staged in-memory only, see
+            // ApplyAndSave for where `ai_skills::save_all` actually runs.
+            Message::AiSkillsToggleExpand(idx) => {
+                if let Some(s) = self.ai_skills.get_mut(idx) {
+                    s.expanded = !s.expanded;
+                }
+            }
+            Message::AiSkillsDescriptionChanged(idx, v) => {
+                if let Some(s) = self.ai_skills.get_mut(idx) {
+                    s.description = v;
+                }
+            }
+            Message::AiSkillsBodyEdited(idx, action) => {
+                if let Some(s) = self.ai_skills.get_mut(idx) {
+                    s.body.perform(action);
+                }
+            }
+            Message::AiSkillsRemove(idx) => {
+                if idx < self.ai_skills.len() {
+                    self.ai_skills.remove(idx);
+                }
+            }
+            Message::AiSkillsAddNameChanged(v) => { self.ai_skills_add_name = v; }
+            Message::AiSkillsAddDescriptionChanged(v) => { self.ai_skills_add_description = v; }
+            Message::AiSkillsAddBodyEdited(action) => {
+                self.ai_skills_add_body.perform(action);
+            }
+            Message::AiSkillsAddSubmit => {
+                let name = self.ai_skills_add_name.trim().to_string();
+                let slug = crate::ai_skills::slugify(&name);
+                let duplicate = self.ai_skills.iter().any(|s| crate::ai_skills::slugify(&s.name) == slug);
+                if !slug.is_empty() && !duplicate {
+                    self.ai_skills.push(AiSkillDraft {
+                        name,
+                        description: self.ai_skills_add_description.trim().to_string(),
+                        body: iced::widget::text_editor::Content::with_text(&self.ai_skills_add_body.text()),
+                        expanded: true,
+                    });
+                    self.ai_skills_add_name.clear();
+                    self.ai_skills_add_description.clear();
+                    self.ai_skills_add_body = iced::widget::text_editor::Content::new();
+                }
+            }
+
+            // AI Context tab — History card (read-only, see
+            // `voice_history.rs`; toggling expand is the only interaction).
+            Message::AiVoiceHistoryToggleExpand(idx) => {
+                if !self.ai_voice_history_expanded.remove(&idx) {
+                    self.ai_voice_history_expanded.insert(idx);
+                }
+            }
+            Message::AiVoiceHistoryClearAll => {
+                crate::voice_history::clear_all();
+                self.ai_voice_history.clear();
+                self.ai_voice_history_expanded.clear();
+            }
+            Message::AiVoiceHistoryKeepInputChanged(v) => {
+                self.ai_voice_history_keep_input = v;
+            }
+            Message::AiVoiceHistoryKeepSubmit => {
+                if let Ok(keep) = self.ai_voice_history_keep_input.trim().parse::<usize>() {
+                    crate::voice_history::keep_recent(keep);
+                    self.ai_voice_history = crate::voice_history::load_recent(200);
+                    self.ai_voice_history_expanded.clear();
+                }
+            }
+
             // Web shortcuts (go/alias)
             Message::GaliasLoaded(aliases) => { self.galias_aliases = aliases; }
             Message::GaliasKeyChanged(k) => { self.galias_key = k; }
@@ -1067,9 +1424,83 @@ impl App {
             }
 
             // Audio tab
-            Message::AudioSubTabSelected(t) => { self.audio_subtab = t; self.sync_audio_meters(); }
+            Message::AudioSubTabSelected(t) => {
+                if self.audio_subtab == AudioSubTab::Spatial && t != AudioSubTab::Spatial {
+                    if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
+                }
+                self.audio_subtab = t;
+                self.sync_audio_meters();
+            }
             Message::AudioMeterTick => {}
             Message::AudioSnapshotLoaded(s) => { self.audio_snapshot = s; self.sync_audio_meters(); }
+
+            Message::SpatialStereo => return self.apply_spatial(crate::surround::Mode::Stereo),
+            Message::SpatialMono => return self.apply_spatial(crate::surround::Mode::Mono),
+            Message::SpatialSurround => {
+                let m = crate::surround::Mode::Surround(self.spatial_preset);
+                return self.apply_spatial(m);
+            }
+            Message::SpatialPresetSelected(p) => {
+                self.spatial_preset = p;
+                if matches!(self.spatial_mode, crate::surround::Mode::Surround(_)) {
+                    return self.apply_spatial(crate::surround::Mode::Surround(p));
+                }
+            }
+            Message::SpatialApplied(res) => {
+                self.spatial_busy = false;
+                match res {
+                    Ok(m) => { self.spatial_mode = m; self.spatial_error = None; }
+                    Err(e) => { self.spatial_error = Some(e); self.spatial_mode = crate::surround::Mode::Stereo; }
+                }
+                self.spatial_active = crate::surround::is_active();
+            }
+            Message::SpatialStreamsLoaded(v) => {
+                self.spatial_streams = v;
+                self.spatial_active = crate::surround::is_active();
+            }
+            Message::SpatialTest(sig) => {
+                if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
+                self.spatial_test = crate::surround::play(sig);
+            }
+            Message::SpatialTestStop => {
+                if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
+            }
+            Message::SpatialStageMode(t) => {
+                self.stage_test_mode = t;
+                self.stage_reveal = None;
+                self.stage_guess = None;
+                self.game_target = None;
+            }
+            Message::SpatialGameNext => {
+                if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
+                let spots = crate::soundstage::SPOTS;
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.subsec_nanos())
+                    .unwrap_or(0) as usize;
+                let target = spots[seed % spots.len()].0;
+                self.game_target = Some(target);
+                self.stage_reveal = None;
+                self.stage_guess = None;
+                self.spatial_test = crate::surround::play_channel_blind(target);
+            }
+            Message::SpatialStageClick(slot) => {
+                if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
+                if self.stage_test_mode {
+                    if let Some(target) = self.game_target.take() {
+                        self.stage_guess = Some(slot);
+                        self.stage_reveal = Some(target);
+                        self.game_rounds += 1;
+                        if slot == target {
+                            self.game_hits += 1;
+                        }
+                    }
+                } else {
+                    self.stage_reveal = Some(slot);
+                    self.stage_guess = None;
+                    self.spatial_test = crate::surround::play_channel_blind(slot);
+                }
+            }
             Message::AudioVolumeChanged(target, pct) => {
                 audio::set_volume(&target, pct);
                 self.audio_snapshot = audio::snapshot();
@@ -1089,6 +1520,21 @@ impl App {
             Message::AudioProfileSelected(card_name, profile_id) => {
                 audio::set_card_profile(&card_name, &profile_id);
                 self.audio_snapshot = audio::snapshot();
+            }
+            Message::AudioMicMonitorToggled(source_name) => {
+                // Switching sources (or re-clicking the active one) always
+                // tears down whatever loopback is currently running first —
+                // never leaves a stale one pointed at the wrong mic.
+                let was_active_for_this_source =
+                    self.mic_monitor.as_ref().is_some_and(|(active, _)| *active == source_name);
+                if let Some((_, idx)) = self.mic_monitor.take() {
+                    audio::stop_mic_monitor(idx);
+                }
+                if !was_active_for_this_source {
+                    if let Some(idx) = audio::start_mic_monitor(&source_name) {
+                        self.mic_monitor = Some((source_name, idx));
+                    }
+                }
             }
 
             // Devices tab
@@ -1192,6 +1638,9 @@ impl App {
             Message::BorderWidthPlus => { self.config.border_width += 1; }
             Message::MonitorResolutionChanged(name, res) => {
                 sway::set_monitor_mode(&name, &res);
+                if let Some(m) = self.monitors.iter().find(|m| m.name == name) {
+                    sway::persist_output_layout(&name, &res, m.x, m.y);
+                }
                 if let Some(mc) = self.config.monitor_configs.iter_mut().find(|m| m.name == name) {
                     mc.resolution = res;
                 } else {
@@ -1856,12 +2305,22 @@ impl App {
                             .unwrap_or((m.x as f32 * scale + 10.0, m.y as f32 * scale + 10.0));
                         let lx = ((cx - 10.0) / scale).round() as i32;
                         let ly = ((cy - 10.0) / scale).round() as i32;
+                        let (lx, ly) = (lx.max(0), ly.max(0));
                         let _ = std::process::Command::new("swaymsg")
-                            .args(["output", &m.name, "pos", &lx.max(0).to_string(), &ly.max(0).to_string()])
-                            .spawn();
+                            .args(["output", &m.name, "pos", &lx.to_string(), &ly.to_string()])
+                            .output();
+                        sway::persist_output_layout(&m.name, &m.current_mode, lx, ly);
                         if let Some(mc) = self.config.monitor_configs.iter_mut().find(|mc| mc.name == m.name) {
-                            mc.x = lx.max(0);
-                            mc.y = ly.max(0);
+                            mc.x = lx;
+                            mc.y = ly;
+                        } else {
+                            self.config.monitor_configs.push(crate::config::MonitorConfig {
+                                name: m.name.clone(),
+                                resolution: m.current_mode.clone(),
+                                x: lx,
+                                y: ly,
+                                enabled: m.active,
+                            });
                         }
                     }
                     self.arrange_mode = false;
@@ -1969,6 +2428,29 @@ impl App {
         }
     }
 
+    /// Apply a Spatial output mode off the UI thread (it shells out to
+    /// systemctl + pactl and polls for the effect sink). Result comes back
+    /// as `Message::SpatialApplied`.
+    fn apply_spatial(&mut self, target: crate::surround::Mode) -> Task<Message> {
+        if self.spatial_busy {
+            return Task::none();
+        }
+        self.spatial_busy = true;
+        self.spatial_error = None;
+        if self.spatial_hw_sink.is_empty() {
+            self.spatial_hw_sink = crate::surround::hardware_default();
+        }
+        let hw = self.spatial_hw_sink.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || crate::surround::apply(target, &hw))
+                    .await
+                    .unwrap_or_else(|_| Err("background task failed".to_string()))
+            },
+            Message::SpatialApplied,
+        )
+    }
+
     /// Spawns/kills `audio_meter::Meter`s so exactly the devices on the
     /// currently visible Output/Input subtab have a live meter running.
     fn sync_audio_meters(&mut self) {
@@ -1997,6 +2479,19 @@ impl App {
                 }
             }
         }
+
+        // Same reasoning as the meters above, but this one matters more:
+        // a leftover loopback isn't just a wasted background process, it's
+        // audible mic-to-speaker feedback that keeps running after you've
+        // navigated away or forgotten it was on. Tear it down the instant
+        // Input isn't the visible subtab — the explicit toggle-off in
+        // AudioMicMonitorToggled handles the "still on Input, clicked
+        // again" case, this covers every other way of leaving it.
+        if !(self.current_tab == Tab::Audio && self.audio_subtab == AudioSubTab::Input) {
+            if let Some((_, idx)) = self.mic_monitor.take() {
+                audio::stop_mic_monitor(idx);
+            }
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -2016,6 +2511,15 @@ impl App {
             && matches!(self.audio_subtab, AudioSubTab::Output | AudioSubTab::Input)
         {
             Some(iced::time::every(std::time::Duration::from_millis(33)).map(|_| Message::AudioMeterTick))
+        } else {
+            None
+        };
+
+        let spatial_poll = if self.current_tab == Tab::Audio && self.audio_subtab == AudioSubTab::Spatial {
+            Some(
+                iced::time::every(std::time::Duration::from_secs(2))
+                    .map(|_| Message::SpatialStreamsLoaded(crate::surround::active_streams())),
+            )
         } else {
             None
         };
@@ -2124,6 +2628,7 @@ impl App {
         if let Some(s) = bar_section_drag { subs.push(s); }
         if let Some(a) = audio_poll { subs.push(a); }
         if let Some(a) = audio_meter_poll { subs.push(a); }
+        if let Some(a) = spatial_poll { subs.push(a); }
         if let Some(d) = bar_drag { subs.push(d); }
         Subscription::batch(subs)
     }
@@ -2588,6 +3093,23 @@ impl App {
                 &self.galias_key,
                 &self.galias_url,
             ),
+            Tab::AiContext => tabs::ai_context::view(
+                colors,
+                self.voice_config.allow_execution,
+                &self.ai_context,
+                &self.ai_context_notes,
+                &self.tailscale_status,
+                &self.ai_context_add_name,
+                &self.ai_context_add_address,
+                &self.ai_context_add_notes,
+                &self.ai_skills,
+                &self.ai_skills_add_name,
+                &self.ai_skills_add_description,
+                &self.ai_skills_add_body,
+                &self.ai_voice_history,
+                &self.ai_voice_history_expanded,
+                &self.ai_voice_history_keep_input,
+            ),
             Tab::Updates => tabs::updater::view(
                 colors,
                 &self.update_status,
@@ -2629,7 +3151,27 @@ impl App {
             Tab::Search => tabs::search::view(&self.config, colors),
             Tab::History => tabs::history::view(&self.history, colors),
             Tab::SysMonitor => tabs::sysmon::view(colors, self.term_canvas.as_ref()),
-            Tab::Audio => tabs::audio::view(colors, self.audio_subtab, &self.audio_snapshot, &self.audio_meters),
+            Tab::Audio => tabs::audio::view(
+                colors,
+                self.audio_subtab,
+                &self.audio_snapshot,
+                &self.audio_meters,
+                self.mic_monitor.as_ref(),
+                tabs::audio::SpatialUi {
+                    mode: self.spatial_mode,
+                    preset: self.spatial_preset,
+                    error: self.spatial_error.as_deref(),
+                    streams: &self.spatial_streams,
+                    test_running: self.spatial_test.is_some(),
+                    active: self.spatial_active,
+                    stage_test_mode: self.stage_test_mode,
+                    stage_reveal: self.stage_reveal,
+                    stage_guess: self.stage_guess,
+                    game_target: self.game_target,
+                    game_hits: self.game_hits,
+                    game_rounds: self.game_rounds,
+                },
+            ),
             Tab::Printing => tabs::printing::view(colors, self.cups_running, &self.printers, &self.detected_printers),
             Tab::Devices => tabs::devices::view(
                 colors,

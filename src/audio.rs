@@ -220,6 +220,28 @@ pub fn set_default_source(name: &str) {
     let _ = Command::new("pactl").args(["set-default-source", name]).status();
 }
 
+/// "Hear yourself" — loops `source_name` straight into the current default
+/// sink via `module-loopback`, so debugging a mic (clarity, background
+/// noise, whether it sounds muffled/clipped) doesn't require alt-tabbing
+/// into a Discord call or the target game just to hear it. `latency_msec=1`
+/// keeps the round-trip short enough that it reads as "live" rather than a
+/// delayed echo. Returns the loaded module's index so it can be unloaded
+/// later — pactl doesn't give loopbacks a stable name, only a numeric index.
+pub fn start_mic_monitor(source_name: &str) -> Option<u32> {
+    let out = Command::new("pactl")
+        .args(["load-module", "module-loopback", &format!("source={source_name}"), "latency_msec=1"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout).ok()?.trim().parse().ok()
+}
+
+pub fn stop_mic_monitor(module_index: u32) {
+    let _ = Command::new("pactl").args(["unload-module", &module_index.to_string()]).status();
+}
+
 pub fn set_card_profile(card_name: &str, profile_id: &str) {
     let _ = Command::new("pactl").args(["set-card-profile", card_name, profile_id]).status();
 }

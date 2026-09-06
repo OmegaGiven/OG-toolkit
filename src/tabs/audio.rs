@@ -2,13 +2,14 @@
 //! Playback, Recording, Configuration), backed by `crate::audio`'s
 //! `pactl -f json` parsing.
 
-use iced::widget::{button, column, container, row, slider, text};
+use iced::widget::{button, column, container, pick_list, row, slider, text};
 use iced::{Background, Border, Color, Length};
 use std::collections::HashMap;
 
 use crate::app::{AppColors, Message};
 use crate::audio::{AudioCard, AudioDevice, AudioSnapshot, AudioStream, AudioTarget};
 use crate::audio_meter::Meter;
+use crate::surround::{Mode as SpatialMode, Preset, StreamInfo, TestSignal, CHANNEL_LABELS};
 
 /// Live peak meter bar — a thin filled track under a device's volume
 /// slider. `pct` is 0.0-100.0 from `Meter::level_pct()`; `None` means no
@@ -93,11 +94,18 @@ pub enum AudioSubTab {
     Playback,
     Recording,
     Configuration,
+    Spatial,
 }
 
 impl AudioSubTab {
-    pub const ALL: [AudioSubTab; 5] =
-        [AudioSubTab::Output, AudioSubTab::Input, AudioSubTab::Playback, AudioSubTab::Recording, AudioSubTab::Configuration];
+    pub const ALL: [AudioSubTab; 6] = [
+        AudioSubTab::Output,
+        AudioSubTab::Input,
+        AudioSubTab::Playback,
+        AudioSubTab::Recording,
+        AudioSubTab::Configuration,
+        AudioSubTab::Spatial,
+    ];
 
     pub fn label(&self) -> &'static str {
         match self {
@@ -106,11 +114,68 @@ impl AudioSubTab {
             AudioSubTab::Playback => "Playback",
             AudioSubTab::Recording => "Recording",
             AudioSubTab::Configuration => "Configuration",
+            AudioSubTab::Spatial => "Spatial",
         }
     }
 }
 
-fn device_card<'a>(colors: AppColors, dev: &'a AudioDevice, target: AudioTarget, meter_pct: Option<f32>) -> Element<'a> {
+/// Everything the Spatial subtab needs, gathered by `app.rs` so `view`'s
+/// signature only grows by one argument.
+pub struct SpatialUi<'a> {
+    pub mode: SpatialMode,
+    /// preset to use / show when the user picks "Virtual surround"
+    pub preset: Preset,
+    pub error: Option<&'a str>,
+    pub streams: &'a [StreamInfo],
+    pub test_running: bool,
+    /// Surround mode is configured AND is the live default output
+    pub active: bool,
+    /// localization soundstage
+    pub stage_test_mode: bool,
+    pub stage_reveal: Option<u8>,
+    pub stage_guess: Option<u8>,
+    pub game_target: Option<u8>,
+    pub game_hits: u32,
+    pub game_rounds: u32,
+}
+
+/// "Hear yourself" toggle — only meaningful for input devices (a source),
+/// so `active` is `None` on the Output subtab and the button doesn't
+/// render at all there. Same visual language as `mute_button`: an icon
+/// button that fills solid when the loopback for *this* device is the one
+/// currently running (only one can be active at a time — see
+/// AudioMicMonitorToggled in app.rs).
+fn monitor_button<'a>(colors: AppColors, active: bool, source_name: String) -> Element<'a> {
+    // md-headphones / md-headphones_off — verified against this system's
+    // actual SymbolsNerdFont-Regular.ttf cmap (0xf0910, tried first, turned
+    // out to map to "md-tag_minus", not headphones at all).
+    let icon = if active { "\u{f02cb}" } else { "\u{f07ce}" };
+    let fg = if active { Color::WHITE } else { colors.text };
+    button(text(icon).size(16).font(nerd_font()).style(move |_| text::Style { color: Some(fg) }))
+        .padding([6, 10])
+        .style(move |_, status| iced::widget::button::Style {
+            background: Some(Background::Color(if active {
+                colors.accent
+            } else if matches!(status, iced::widget::button::Status::Hovered) {
+                colors.surface
+            } else {
+                Color::TRANSPARENT
+            })),
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            text_color: fg,
+            ..Default::default()
+        })
+        .on_press(Message::AudioMicMonitorToggled(source_name))
+        .into()
+}
+
+fn device_card<'a>(
+    colors: AppColors,
+    dev: &'a AudioDevice,
+    target: AudioTarget,
+    meter_pct: Option<f32>,
+    monitor_active: Option<bool>,
+) -> Element<'a> {
     let card_style = move |_: &_| container::Style {
         background: Some(Background::Color(colors.sec_bg)),
         border: Border { color: if dev.is_default { colors.accent } else { colors.border }, width: if dev.is_default { 2.0 } else { 1.0 }, radius: colors.radius.into() },
@@ -132,7 +197,18 @@ fn device_card<'a>(colors: AppColors, dev: &'a AudioDevice, target: AudioTarget,
     };
 
     let mute_target = target.clone();
-    let vol_target = target;
+    let vol_target = target.clone();
+
+    let mut control_row = row![
+        mute_button(colors, dev.mute, mute_target),
+        slider(0..=150u32, dev.volume_pct, move |v| Message::AudioVolumeChanged(vol_target.clone(), v)).step(1u32),
+        text(format!("{}%", dev.volume_pct)).size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(10);
+    if let (Some(active), AudioTarget::Source(name)) = (monitor_active, &target) {
+        control_row = control_row.push(monitor_button(colors, active, name.clone()));
+    }
 
     container(
         column![
@@ -143,13 +219,7 @@ fn device_card<'a>(colors: AppColors, dev: &'a AudioDevice, target: AudioTarget,
             ]
             .align_y(iced::Alignment::Center)
             .spacing(8),
-            row![
-                mute_button(colors, dev.mute, mute_target),
-                slider(0..=150u32, dev.volume_pct, move |v| Message::AudioVolumeChanged(vol_target.clone(), v)).step(1u32),
-                text(format!("{}%", dev.volume_pct)).size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
-            ]
-            .align_y(iced::Alignment::Center)
-            .spacing(10),
+            control_row,
             meter_bar(colors, meter_pct),
         ]
         .spacing(6)
@@ -232,7 +302,14 @@ fn card_config<'a>(colors: AppColors, card: &'a AudioCard) -> Element<'a> {
 
 type Element<'a> = iced::Element<'a, Message>;
 
-pub fn view<'a>(colors: AppColors, subtab: AudioSubTab, snapshot: &'a AudioSnapshot, meters: &'a HashMap<String, Meter>) -> Element<'a> {
+pub fn view<'a>(
+    colors: AppColors,
+    subtab: AudioSubTab,
+    snapshot: &'a AudioSnapshot,
+    meters: &'a HashMap<String, Meter>,
+    mic_monitor: Option<&'a (String, u32)>,
+    spatial: SpatialUi<'a>,
+) -> Element<'a> {
     let tab_row: Vec<Element> = AudioSubTab::ALL
         .iter()
         .map(|t| {
@@ -262,7 +339,7 @@ pub fn view<'a>(colors: AppColors, subtab: AudioSubTab, snapshot: &'a AudioSnaps
             } else {
                 column(snapshot.sinks.iter().map(|d| {
                     let pct = meters.get(&d.name).map(Meter::level_pct);
-                    device_card(colors, d, AudioTarget::Sink(d.name.clone()), pct)
+                    device_card(colors, d, AudioTarget::Sink(d.name.clone()), pct, None)
                 }))
                 .spacing(10)
                 .into()
@@ -274,7 +351,8 @@ pub fn view<'a>(colors: AppColors, subtab: AudioSubTab, snapshot: &'a AudioSnaps
             } else {
                 column(snapshot.sources.iter().map(|d| {
                     let pct = meters.get(&d.name).map(Meter::level_pct);
-                    device_card(colors, d, AudioTarget::Source(d.name.clone()), pct)
+                    let active = mic_monitor.is_some_and(|(name, _)| *name == d.name);
+                    device_card(colors, d, AudioTarget::Source(d.name.clone()), pct, Some(active))
                 }))
                 .spacing(10)
                 .into()
@@ -301,6 +379,7 @@ pub fn view<'a>(colors: AppColors, subtab: AudioSubTab, snapshot: &'a AudioSnaps
                 column(snapshot.cards.iter().map(|c| card_config(colors, c))).spacing(10).into()
             }
         }
+        AudioSubTab::Spatial => spatial_view(colors, &spatial),
     };
 
     column![
@@ -310,4 +389,250 @@ pub fn view<'a>(colors: AppColors, subtab: AudioSubTab, snapshot: &'a AudioSnaps
     .spacing(16)
     .padding(20)
     .into()
+}
+
+// ══ Spatial subtab ════════════════════════════════════════════════════════
+//
+// Experimental headphone audio lab: pick an output mode (Stereo / Mono /
+// Virtual surround), see what channel layout each app is really feeding the
+// system, and fire test tones. Backed by `crate::surround`.
+
+fn seg_button<'a>(colors: AppColors, label: &'a str, active: bool, msg: Message) -> Element<'a> {
+    button(text(label).size(13).style(move |_| text::Style {
+        color: Some(if active { colors.bar_bg } else { colors.text }),
+    }))
+    .padding([8, 16])
+    .style(move |_, status| iced::widget::button::Style {
+        background: Some(Background::Color(if active {
+            colors.accent
+        } else if matches!(status, iced::widget::button::Status::Hovered) {
+            colors.surface
+        } else {
+            colors.sec_bg
+        })),
+        text_color: if active { colors.bar_bg } else { colors.text },
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+        ..Default::default()
+    })
+    .on_press(msg)
+    .into()
+}
+
+fn small_button<'a>(colors: AppColors, label: String, msg: Message) -> Element<'a> {
+    button(text(label).size(12).style(move |_| text::Style { color: Some(colors.text) }))
+        .padding([6, 10])
+        .style(move |_, status| iced::widget::button::Style {
+            background: Some(Background::Color(if matches!(status, iced::widget::button::Status::Hovered) {
+                colors.accent
+            } else {
+                colors.surface
+            })),
+            text_color: colors.text,
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            ..Default::default()
+        })
+        .on_press(msg)
+        .into()
+}
+
+fn spatial_view<'a>(colors: AppColors, s: &SpatialUi<'a>) -> Element<'a> {
+    let dim = move |t: &str| text(t.to_string()).size(12).style(move |_| text::Style { color: Some(colors.dim_text) });
+    let head = move |t: &str| text(t.to_string()).size(13).style(move |_| text::Style { color: Some(colors.text) });
+
+    let is_stereo = matches!(s.mode, SpatialMode::Stereo);
+    let is_mono = matches!(s.mode, SpatialMode::Mono);
+    let is_surround = matches!(s.mode, SpatialMode::Surround(_));
+
+    // ── mode selector ───────────────────────────────────────────────
+    let selector = row![
+        seg_button(colors, "Stereo", is_stereo, Message::SpatialStereo),
+        seg_button(colors, "Mono", is_mono, Message::SpatialMono),
+        seg_button(colors, "Virtual surround", is_surround, Message::SpatialSurround),
+    ]
+    .spacing(6);
+
+    let mode_note = dim(match s.mode {
+        SpatialMode::Stereo => "Passthrough — the real device is the default output. Nothing added.",
+        SpatialMode::Mono => "Left + right summed into both ears. Useful for checking balance and mono compatibility.",
+        SpatialMode::Surround(_) => {
+            "A PipeWire convolver sink is the default output. Stereo is upmixed to 7.1; real 5.1/7.1 (a movie) passes straight in; both are folded to binaural with the HRIR below."
+        }
+    });
+
+    let preset_row: Element<'a> = if is_surround {
+        row![
+            head("HRIR profile"),
+            pick_list(&Preset::ALL[..], Some(s.preset), Message::SpatialPresetSelected),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        column![].into()
+    };
+
+    let banner_text: Option<String> = if let Some(e) = s.error {
+        Some(e.to_string())
+    } else if is_surround && !s.active {
+        Some("Virtual surround is set but NOT the active output — something else grabbed the default device. Click \"Virtual surround\" again to re-activate.".to_string())
+    } else {
+        None
+    };
+    let error_banner: Element<'a> = match banner_text {
+        Some(e) => container(text(e).size(12).style(move |_| text::Style { color: Some(Color::WHITE) }))
+            .padding(10)
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(MUTE_RED)),
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                ..Default::default()
+            })
+            .into(),
+        None => column![].into(),
+    };
+
+    let mode_card = container(
+        column![head("Output mode"), selector, mode_note, preset_row, error_banner].spacing(10).padding(14),
+    )
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(colors.sec_bg)),
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+        ..Default::default()
+    });
+
+    // ── what's playing ──────────────────────────────────────────────
+    let stream_rows: Element<'a> = if s.streams.is_empty() {
+        dim("Nothing is playing. Start a track or a movie and its real channel layout shows here.").into()
+    } else {
+        column(s.streams.iter().map(|st| {
+            let surround = st.channels > 2;
+            let tag_color = if surround { colors.accent } else { colors.dim_text };
+            let name = if st.corked { format!("{} (paused)", st.app) } else { st.app.clone() };
+            row![
+                text(name).size(13).style(move |_| text::Style { color: Some(colors.text) }),
+                iced::widget::horizontal_space(),
+                text(st.layout.clone()).size(12).style(move |_| text::Style { color: Some(tag_color) }),
+                text(st.spec.clone()).size(11).style(move |_| text::Style { color: Some(colors.dim_text) }),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center)
+            .into()
+        }))
+        .spacing(8)
+        .into()
+    };
+    let streams_card = container(column![head("What's playing (source channels)"), stream_rows].spacing(10).padding(14))
+        .width(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(colors.sec_bg)),
+            border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+            ..Default::default()
+        });
+
+    // ── test signals ────────────────────────────────────────────────
+    let chan_btns: Element<'a> = iced::widget::row(CHANNEL_LABELS.iter().enumerate().map(|(i, label)| {
+        small_button(colors, label.to_string(), Message::SpatialTest(TestSignal::Channel(i as u8)))
+    }))
+    .spacing(6)
+    .wrap()
+    .into();
+    let other_btns = row![
+        small_button(colors, "Left only".into(), Message::SpatialTest(TestSignal::LeftOnly)),
+        small_button(colors, "Right only".into(), Message::SpatialTest(TestSignal::RightOnly)),
+        small_button(colors, "20 Hz → 20 kHz sweep".into(), Message::SpatialTest(TestSignal::Sweep)),
+    ]
+    .spacing(6);
+    let stop_btn: Element<'a> = if s.test_running {
+        small_button(colors, "■ Stop".into(), Message::SpatialTestStop)
+    } else {
+        column![].into()
+    };
+    let walk_btn = seg_button(
+        colors,
+        "\u{25B6}  Test all channels",
+        false,
+        Message::SpatialTest(TestSignal::AllChannels),
+    );
+    let test_card = container(
+        column![
+            head("Test signals"),
+            dim("Played through whatever the current mode routes to — with Virtual surround on, each channel should land at a different point around your head."),
+            row![walk_btn, iced::widget::horizontal_space(), stop_btn].align_y(iced::Alignment::Center),
+            dim("…or fire one channel at a time:"),
+            chan_btns,
+            other_btns,
+        ]
+        .spacing(10)
+        .padding(14),
+    )
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(colors.sec_bg)),
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+        ..Default::default()
+    });
+
+    // ── localization soundstage ─────────────────────────────────────
+    let mode_row = row![
+        seg_button(colors, "Free play", !s.stage_test_mode, Message::SpatialStageMode(false)),
+        seg_button(colors, "Test me", s.stage_test_mode, Message::SpatialStageMode(true)),
+    ]
+    .spacing(6);
+
+    let stage = crate::soundstage::view(
+        s.stage_reveal,
+        s.stage_guess,
+        s.game_target.is_some(),
+        colors,
+    );
+
+    let stage_controls: Element<'a> = if s.stage_test_mode {
+        let score = if s.game_rounds > 0 {
+            format!("{} / {}  ({}%)", s.game_hits, s.game_rounds, s.game_hits * 100 / s.game_rounds)
+        } else {
+            "no rounds yet".to_string()
+        };
+        let verdict: Element<'a> = match (s.stage_guess, s.stage_reveal) {
+            (Some(g), Some(t)) if g == t => text("\u{2713} correct")
+                .size(13)
+                .style(move |_| text::Style { color: Some(colors.accent) })
+                .into(),
+            (Some(_), Some(_)) => text("\u{2717} missed")
+                .size(13)
+                .style(move |_| text::Style { color: Some(MUTE_RED) })
+                .into(),
+            _ => column![].into(),
+        };
+        column![
+            row![
+                small_button(colors, "\u{25B6} New sound".into(), Message::SpatialGameNext),
+                iced::widget::horizontal_space(),
+                verdict,
+                text(score).size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+            dim("A hidden direction plays. Click where you heard it. Tells you how much is your ears vs the HRIR."),
+        ]
+        .spacing(8)
+        .into()
+    } else {
+        dim("Click any direction around the head to hear a sound placed there.").into()
+    };
+
+    let stage_card = container(
+        column![head("Localization"), mode_row, stage, stage_controls]
+            .spacing(10)
+            .padding(14)
+            .align_x(iced::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(colors.sec_bg)),
+        border: Border { color: colors.border, width: 1.0, radius: colors.radius.into() },
+        ..Default::default()
+    });
+
+    column![mode_card, streams_card, test_card, stage_card].spacing(14).into()
 }

@@ -338,10 +338,16 @@ pub fn view<'a>(
             .spacing(10)
             .into()
         );
-        if tailscale.peers.is_empty() {
+        // `tailscale.peers` now holds every tailnet peer (the AI Context
+        // tab needs the full list too), so this picker filters down to
+        // exit-node-capable ones itself instead of relying on the list
+        // already being pre-filtered.
+        let exit_capable: Vec<&crate::vpn::TailscalePeer> =
+            tailscale.peers.iter().filter(|p| p.exit_node_option).collect();
+        if exit_capable.is_empty() {
             ts_rows.push(dim("No peers on this tailnet advertise as an exit node.".to_string()));
         }
-        for p in tailscale.peers.iter() {
+        for p in exit_capable {
             let hostname = p.hostname.clone();
             ts_rows.push(
                 row![
