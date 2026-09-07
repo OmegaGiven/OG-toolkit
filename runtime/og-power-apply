@@ -3,7 +3,10 @@ CONFIG="$HOME/.config/sway-power/config.json"
 PID_FILE="$HOME/.config/sway-power/swayidle.pid"
 WATCH_PID_FILE="$HOME/.config/sway-power/controller-idle-watch.pid"
 
-pkill -F "$PID_FILE" 2>/dev/null || pkill -x swayidle 2>/dev/null || true
+# Kill by pidfile AND by name: the pidfile only tracks the last instance we
+# spawned, and an `||` here left any older stray swayidle running (two
+# instances = doubled dpms/lock commands).
+pkill -F "$PID_FILE" 2>/dev/null; pkill -x swayidle 2>/dev/null; true
 sleep 0.3
 
 # Gamepad input never reaches swayidle's own (keyboard/pointer-only) idle
