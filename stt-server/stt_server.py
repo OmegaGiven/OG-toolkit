@@ -22,6 +22,7 @@ import os
 import sys
 import tempfile
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
@@ -36,7 +37,13 @@ except ImportError:
 
 HOST = os.environ.get("OG_VOICE_STT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OG_VOICE_STT_PORT", "8765"))
-MODEL_SIZE = os.environ.get("OG_VOICE_STT_MODEL", "small.en")
+# medium.en over small.en: meaningfully more accurate, still
+# CTranslate2/faster-whisper under the hood so still CPU-viable (unlike
+# e.g. NVIDIA Parakeet, whose big speed numbers are GPU-only — its
+# CPU path is explicitly not recommended upstream). Costs some latency
+# per chunk versus small.en; if that trade stops being worth it, drop
+# back via OG_VOICE_STT_MODEL=small.en.
+MODEL_SIZE = os.environ.get("OG_VOICE_STT_MODEL", "medium.en")
 DEVICE = os.environ.get("OG_VOICE_STT_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("OG_VOICE_STT_COMPUTE", "int8")
 
@@ -69,7 +76,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/transcribe":
+        split = urllib.parse.urlsplit(self.path)
+        if split.path != "/transcribe":
             self._send_json(404, {"error": "not found"})
             return
 
@@ -78,6 +86,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "empty body"})
             return
         wav_bytes = self.rfile.read(length)
+
+        # Tail of the transcript so far this recording (see
+        # pipeline.rs::run_recording) — each chunk is otherwise
+        # transcribed cold with no idea what was just said, which hurts
+        # continuity/spelling at chunk boundaries. Absent on the first
+        # chunk of a recording.
+        prompt = urllib.parse.parse_qs(split.query).get("prompt", [None])[0]
 
         # faster-whisper wants a path or file-like object it can seek on;
         # a real temp file is the simplest thing that's definitely
@@ -93,7 +108,24 @@ class Handler(BaseHTTPRequestHandler):
                 # sequentially, not pipelined), so this lock is just
                 # cheap insurance against a future caller that isn't.
                 with _model_lock:
-                    segments, _info = _model.transcribe(tmp.name, beam_size=1)
+                    # vad_filter: each ~1.5s chunk often ends in a sliver
+                    # of trailing silence (mic latency, natural pause
+                    # before the next chunk), and Whisper is well known
+                    # to hallucinate filler words — "you", "you.",
+                    # "Thank you." — off of silence-only audio rather
+                    # than emitting nothing. Silero VAD (bundled via
+                    # onnxruntime, already a faster-whisper dependency)
+                    # strips non-speech regions before they ever reach
+                    # the model, which is the actual fix — trimming
+                    # known hallucination strings after the fact would
+                    # also eat a real "you" the user said.
+                    segments, _info = _model.transcribe(
+                        tmp.name,
+                        beam_size=1,
+                        vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=300),
+                        initial_prompt=prompt,
+                    )
                     text = "".join(seg.text for seg in segments).strip()
             self._send_json(200, {"text": text})
         except Exception as e:  # noqa: BLE001 - want any failure reported, not crash the server

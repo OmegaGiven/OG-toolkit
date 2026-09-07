@@ -30,6 +30,17 @@ pub struct VoiceConfig {
     /// actual bindsym lines.
     #[serde(default = "default_hotkey_hint")]
     pub hotkey_hint: String,
+    /// Gates `--dangerously-skip-permissions` in `claude.rs`'s `ask()`.
+    /// Headless `-p` mode has no interactive prompt to approve/deny tool
+    /// use, so this is the only thing standing between a voice/typed
+    /// command and Claude actually running Bash/SSH/file-edit tools with
+    /// zero confirmation. `#[serde(default)]` (i.e. `false`) is
+    /// deliberate: an existing `voice-config.json` from before this field
+    /// existed must NOT silently inherit the old hardcoded-always-on
+    /// behavior — it should load as execution-disabled until the user
+    /// explicitly flips it on (og-settings' AI Context tab, or by hand).
+    #[serde(default)]
+    pub allow_execution: bool,
 }
 
 fn default_ai_backend() -> String {
@@ -48,6 +59,7 @@ impl Default for VoiceConfig {
             ai_backend: default_ai_backend(),
             stt_server_url: default_stt_url(),
             hotkey_hint: default_hotkey_hint(),
+            allow_execution: false,
         }
     }
 }

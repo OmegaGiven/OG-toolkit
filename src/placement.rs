@@ -115,6 +115,20 @@ fn window_exists(app_id: &str) -> bool {
     walk(&tree, app_id)
 }
 
+/// Double-launch handling for `--interactive`: rather than silently
+/// doing nothing when an og-voice instance is already running (recording
+/// from the hotkey flow, or an already-open idle interactive window),
+/// best-effort bring it to focus so the user gets *some* feedback their
+/// keypress/click did something. Best-effort/fire-and-forget, same as
+/// every other `swaymsg` call in this file — a failure here (window
+/// already gone, sway not reachable) just means the user sees nothing
+/// happen, no worse than before this existed.
+pub fn focus_existing() {
+    let _ = std::process::Command::new("swaymsg")
+        .arg("[app_id=\"og-voice\"] focus")
+        .output();
+}
+
 /// The real fix — issues `swaymsg move position` once the window is
 /// actually mapped (polls briefly since this races the compositor
 /// mapping/floating the surface, same as og-notif-center's version).

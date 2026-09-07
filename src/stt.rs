@@ -20,13 +20,20 @@ struct TranscribeResponse {
 /// silence). A network/parse error is surfaced as `Err` so the caller can
 /// decide whether to drop the chunk and keep going (a single dropped
 /// chunk isn't fatal to the running transcript) or surface it to the UI.
-pub fn transcribe(server_url: &str, wav_bytes: &[u8]) -> Result<String, String> {
+///
+/// `prior_context` (the tail of the transcript accumulated so far this
+/// recording) is passed as Whisper's `initial_prompt` server-side — each
+/// chunk is transcribed independently otherwise (see `pipeline.rs`'s
+/// chunking), so without this the model has no idea what was just said
+/// and continuity/spelling at chunk boundaries suffers. Empty on the
+/// first chunk of a recording. `.query()` handles percent-encoding.
+pub fn transcribe(server_url: &str, wav_bytes: &[u8], prior_context: &str) -> Result<String, String> {
     let url = format!("{}/transcribe", server_url.trim_end_matches('/'));
-    let resp = ureq::post(&url)
-        .set("Content-Type", "audio/wav")
-        .timeout(Duration::from_secs(10))
-        .send_bytes(wav_bytes)
-        .map_err(|e| e.to_string())?;
+    let mut req = ureq::post(&url).set("Content-Type", "audio/wav").timeout(Duration::from_secs(10));
+    if !prior_context.is_empty() {
+        req = req.query("prompt", prior_context);
+    }
+    let resp = req.send_bytes(wav_bytes).map_err(|e| e.to_string())?;
     let parsed: TranscribeResponse = resp.into_json().map_err(|e| e.to_string())?;
     Ok(parsed.text)
 }

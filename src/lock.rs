@@ -67,3 +67,18 @@ pub fn send_stop() -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// `--start` entry point: a hotkey press while an instance is already
+/// running (i.e. the popup is still open showing a `Done`/`Failed`/
+/// `Cancelled` answer from the previous turn) signals it to begin a new
+/// recording turn in place, rather than launching a second window. Same
+/// SIGUSR1-vs-socket reasoning as `send_stop`, just SIGUSR2 so the two
+/// signals don't collide.
+pub fn send_start() -> bool {
+    let Some(pid) = running_pid() else { return false };
+    Command::new("kill")
+        .args(["-USR2", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
