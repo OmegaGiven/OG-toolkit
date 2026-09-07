@@ -1981,6 +1981,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "og-drag"
+version = "0.1.0"
+dependencies = [
+ "iced",
+]
+
+[[package]]
 name = "og-files"
 version = "0.1.0"
 dependencies = [
@@ -1992,6 +1999,7 @@ dependencies = [
  "libc",
  "mime_guess",
  "og-config",
+ "og-drag",
  "og-theme",
  "og-wayland",
  "serde",

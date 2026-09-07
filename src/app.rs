@@ -1141,6 +1141,13 @@ impl App {
             root
         };
 
+        let root = if let Some(paths) = &self.file_drag {
+            let ghost = drag_ghost_files(paths);
+            og_drag::with_drag_ghost(root, Some(ghost), self.cursor_pos, iced::Vector::new(14.0, 14.0))
+        } else {
+            root
+        };
+
         if self.pane_drag.is_some() {
             drag_ghost_line(root, self.drag_preview_x)
         } else {
@@ -1686,6 +1693,42 @@ fn selectable_text<'a>(value: &str, size: u16) -> Element<'a, Message> {
 /// base layout via `stack!`. Actually resizing the sidebar/preview panel
 /// (and the file grid's expensive reflow with it) only happens once, in
 /// `PaneDragEnd`, instead of on every tick of the drag.
+/// Visual confirmation for an in-window file drag (drop onto a folder row
+/// to move) — a small chip riding the cursor showing what's being
+/// dragged, via og-drag's shared ghost-follows-cursor helper. Separate
+/// from the real cross-app Wayland drag `og_wayland::DragRequest` also
+/// starts alongside this (see the `CursorMoved` handler) — that one gives
+/// the compositor no icon surface today (`start_drag(..., None, ...)`),
+/// so this in-window ghost is the only visual feedback that exists while
+/// the cursor is still over this window; dragging out into another app
+/// still won't show anything under the cursor once it leaves.
+fn drag_ghost_files<'a>(paths: &[PathBuf]) -> Element<'a, Message> {
+    const ICON_FONT: iced::Font = iced::Font::with_name("Symbols Nerd Font");
+
+    let label = if let [single] = paths {
+        single.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+    } else {
+        format!("{} items", paths.len())
+    };
+    let icon = if paths.first().is_some_and(|p| p.is_dir()) { "\u{f07b}" } else { "\u{f0f6}" };
+
+    container(
+        row![
+            text(icon).font(ICON_FONT).size(15).style(move |_| text::Style { color: Some(TEXT()) }),
+            text(label).size(13).style(move |_| text::Style { color: Some(TEXT()) }),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding([6, 10])
+    .style(|_| container::Style {
+        background: Some(Background::Color(Color { a: 0.9, ..ACCENT() })),
+        border: Border { radius: 6.0.into(), ..Default::default() },
+        ..Default::default()
+    })
+    .into()
+}
+
 fn drag_ghost_line<'a>(base: Element<'a, Message>, x: f32) -> Element<'a, Message> {
     use iced::widget::stack;
 

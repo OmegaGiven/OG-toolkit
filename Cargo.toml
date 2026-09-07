@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 og-config = { path = "../OG-toolkit/crates/og-config" }
+og-drag = { path = "../OG-toolkit/crates/og-drag" }
 og-theme = { path = "../OG-toolkit/crates/og-theme" }
 og-wayland = { path = "../OG-toolkit/crates/og-wayland" }
 iced = { version = "0.13", default-features = false, features = ["tiny-skia", "advanced", "tokio", "image"] }
