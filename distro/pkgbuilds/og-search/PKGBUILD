@@ -1,0 +1,30 @@
+# Maintainer: OmegaGiven
+# Source repo is omegagiven-search; binary/pkg name is og-search. Built
+# on the dev machine, not inside the archiso chroot — see
+# og-os/OS-PLAN.md phase 2. Sources via rsync from the LIVE working
+# tree, not git — these repos carry uncommitted work a git+file:// clone
+# would silently drop.
+pkgname=og-search
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="OG-toolkit launcher (apps, files, settings, instant shortcuts)"
+arch=('x86_64')
+url="https://github.com/OmegaGiven/OG-system-search"
+license=('unknown')
+depends=('gcc-libs' 'wayland' 'ttf-nerd-fonts-symbols')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/omegagiven-search/" "$srcdir/omegagiven-search/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
+
+build() {
+  cd "$srcdir/omegagiven-search"
+  cargo build --release
+}
+
+package() {
+  install -Dm755 "$srcdir/omegagiven-search/target/release/og-search" "$pkgdir/usr/bin/og-search"
+}

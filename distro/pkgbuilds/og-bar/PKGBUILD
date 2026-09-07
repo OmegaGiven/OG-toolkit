@@ -1,0 +1,34 @@
+# Maintainer: OmegaGiven
+# Built and run on the dev machine (not inside the archiso chroot) — see
+# og-os/OS-PLAN.md phase 2. Produces target/release/og-bar for repo-add
+# into og-os/local-repo/[ogos].
+#
+# Sources via rsync from the LIVE working tree, not git — both og-bar and
+# OG-toolkit carry substantial uncommitted work (new notification/
+# clipboard modules, an og-drag dep, ModuleKind variants) that a
+# git+file:// clone would silently drop in favor of a stale commit. This
+# packages what's actually on disk right now.
+pkgname=og-bar
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="OG-toolkit taskbar (workspaces, clock, tray, system stats, quick toggles)"
+arch=('x86_64')
+url="https://github.com/OmegaGiven/OG-bar"
+license=('unknown')
+depends=('gcc-libs' 'wayland' 'ttf-nerd-fonts-symbols' 'wl-clipboard' 'grim' 'slurp')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-bar/" "$srcdir/og-bar/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
+
+build() {
+  cd "$srcdir/og-bar"
+  cargo build --release
+}
+
+package() {
+  install -Dm755 "$srcdir/og-bar/target/release/og-bar" "$pkgdir/usr/bin/og-bar"
+}

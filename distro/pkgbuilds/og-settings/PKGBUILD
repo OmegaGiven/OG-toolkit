@@ -1,0 +1,29 @@
+# Maintainer: OmegaGiven
+# Source repo is sway-control; binary/pkg name is og-settings. Built on
+# the dev machine, not inside the archiso chroot — see og-os/OS-PLAN.md
+# phase 2. Sources via rsync from the LIVE working tree, not git — these
+# repos carry uncommitted work a git+file:// clone would silently drop.
+pkgname=og-settings
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="OG-toolkit control panel (theme, audio, network, printing, power, sysmonitor)"
+arch=('x86_64')
+url="https://github.com/OmegaGiven/sway-settings-manager"
+license=('unknown')
+depends=('gcc-libs' 'wayland' 'btop' 'bluez' 'iwd')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/sway-control/" "$srcdir/sway-control/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
+
+build() {
+  cd "$srcdir/sway-control"
+  cargo build --release
+}
+
+package() {
+  install -Dm755 "$srcdir/sway-control/target/release/og-settings" "$pkgdir/usr/bin/og-settings"
+}

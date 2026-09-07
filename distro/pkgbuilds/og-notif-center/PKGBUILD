@@ -1,0 +1,31 @@
+# Maintainer: OmegaGiven
+# Built on the dev machine, not inside the archiso chroot — see
+# og-os/OS-PLAN.md phase 2. Sources via rsync from the LIVE working
+# tree, not git — this is what surfaced the real bug: og-notif-center's
+# placement.rs uses ModuleKind::Notifications/Clipboard, which exist in
+# OG-toolkit's working tree but weren't committed yet — a git+file://
+# clone silently built against the old committed enum and failed.
+pkgname=og-notif-center
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="OG-toolkit notification history popup"
+arch=('x86_64')
+url="https://github.com/OmegaGiven/og-notif-center"
+license=('unknown')
+depends=('gcc-libs' 'wayland')
+makedepends=('cargo' 'rsync')
+source=()
+
+prepare() {
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-notif-center/" "$srcdir/og-notif-center/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+}
+
+build() {
+  cd "$srcdir/og-notif-center"
+  cargo build --release
+}
+
+package() {
+  install -Dm755 "$srcdir/og-notif-center/target/release/og-notif-center" "$pkgdir/usr/bin/og-notif-center"
+}
