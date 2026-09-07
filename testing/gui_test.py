@@ -114,9 +114,12 @@ class GuestSession:
     def wait_for_ssh(self, timeout: int = 120) -> None:
         deadline = time.time() + timeout
         while time.time() < deadline:
-            r = self.ssh("echo ok", timeout=5)
-            if r.returncode == 0 and "ok" in r.stdout:
-                return
+            try:
+                r = self.ssh("echo ok", timeout=5)
+                if r.returncode == 0 and "ok" in r.stdout:
+                    return
+            except subprocess.TimeoutExpired:
+                pass
             time.sleep(2)
         raise TimeoutError("SSH never came up")
 
@@ -129,11 +132,17 @@ class GuestSession:
         create any device at all in this environment (see module
         docstring) — the plain REL-only device plus calibrate_pointer()
         is the combination that actually works."""
-        self.ssh("sudo pacman -Sy --noconfirm ydotool", timeout=60)
-        self.ssh("sudo usermod -aG input liveuser")
+        # liveuser has passwordless sudo baked into the ISO; a real
+        # installed user doesn't -- sudo -S with the login password
+        # piped in works for both, so always use it rather than bare
+        # `sudo` (which hangs forever waiting on a tty that isn't there
+        # over a non-interactive ssh command).
+        sudo = f"echo {self.password} | sudo -S -p ''"
+        self.ssh(f"{sudo} pacman -Sy --noconfirm ydotool", timeout=60)
+        self.ssh(f"{sudo} usermod -aG input {self.user}")
         self.ssh(
-            f"sudo setsid ydotoold < /dev/null > /tmp/ydotoold.log 2>&1 & disown; "
-            f"sleep 1; sudo chmod 666 {self.ydotool_socket}"
+            f"{sudo} setsid ydotoold < /dev/null > /tmp/ydotoold.log 2>&1 & disown; "
+            f"sleep 1; {sudo} chmod 666 {self.ydotool_socket}"
         )
 
     def wait_for_sway_socket(self, timeout: int = 60) -> str:

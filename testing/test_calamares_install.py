@@ -22,33 +22,30 @@ Usage:
         --username testuser --password testpass123 --hostname ogos-test
 """
 import argparse
+import os
 import time
 
 from gui_test import GuestSession
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--ssh-port", type=int, required=True)
-    ap.add_argument("--monitor-port", type=int, required=True)
-    ap.add_argument("--live-password", default="ogos")
-    ap.add_argument("--username", default="testuser")
-    ap.add_argument("--password", default="testpass123")
-    ap.add_argument("--hostname", default="ogos-test")
-    ap.add_argument("--fullname", default="Test User")
-    ap.add_argument("--screenshot-dir", default="/tmp/ogos-test-shots")
-    ap.add_argument("--install-timeout", type=int, default=900,
-                     help="seconds to wait for the install job to reach Finish")
-    args = ap.parse_args()
+def run_install(ssh_port: int, monitor_port: int, live_password: str = "ogos",
+                 username: str = "testuser", password: str = "testpass123",
+                 hostname: str = "ogos-test", fullname: str = "Test User",
+                 screenshot_dir: str = "/tmp/ogos-test-shots",
+                 install_timeout: int = 900) -> GuestSession:
+    """Drives the full Calamares click-through against an already-booted
+    ISO (see boot-vm.sh). Returns the GuestSession used, so a caller
+    (e.g. full_install_boot_test.py) can keep using it after this
+    returns if it wants (though by then the live session is about to be
+    torn down for a reboot into the installed system, so there's not
+    much left to do with it)."""
+    os.makedirs(screenshot_dir, exist_ok=True)
 
-    import os
-    os.makedirs(args.screenshot_dir, exist_ok=True)
-
-    g = GuestSession(ssh_port=args.ssh_port, password=args.live_password)
+    g = GuestSession(ssh_port=ssh_port, password=live_password)
 
     def shot(name):
-        path = f"{args.screenshot_dir}/{name}.png"
-        g.screenshot(args.monitor_port, path)
+        path = f"{screenshot_dir}/{name}.png"
+        g.screenshot(monitor_port, path)
         print(f"  [screenshot: {path}]")
         return path
 
@@ -59,7 +56,7 @@ def main():
     g.install_ydotool()
 
     print("== Logging in at greeter ==")
-    g.login_greeter(args.live_password)
+    g.login_greeter(live_password)
     g.wait_for_sway_socket(timeout=60)
     print("  sway session up")
 
@@ -123,15 +120,15 @@ def main():
     w = g.find_window("io.calamares.calamares")
     rect = w["rect"]
     g.click(rect["x"] + 300, rect["y"] + 50)
-    g.type_text(args.fullname)
+    g.type_text(fullname)
     g.key("15:1", "15:0")  # Tab (KEY_TAB=15)
-    g.type_text(args.username)
+    g.type_text(username)
     g.key("15:1", "15:0")
-    g.type_text(args.hostname)
+    g.type_text(hostname)
     g.key("15:1", "15:0")
-    g.type_text(args.password)
+    g.type_text(password)
     g.key("15:1", "15:0")
-    g.type_text(args.password)
+    g.type_text(password)
     time.sleep(0.5)
     shot("07-users-filled")
 
@@ -164,7 +161,7 @@ def main():
     shot("11-installing")
 
     print(f"== Waiting for install job to finish (checking every 20s, up to "
-          f"{args.install_timeout}s) ==")
+          f"{install_timeout}s) ==")
     # No reliable non-OCR signal distinguishes "still copying files" from
     # "done, sitting on Finish" from "failed, sitting on an error dialog"
     # from screenshots alone (confirmed in testing: both success and
@@ -176,14 +173,37 @@ def main():
     # checks wall-clock time and leaves the actual "did it succeed"
     # judgment to whoever reviews the screenshots, which is the honest
     # thing to do given the ambiguity above).
-    deadline = time.time() + args.install_timeout
+    deadline = time.time() + install_timeout
     shot_n = 12
     while time.time() < deadline:
         time.sleep(20)
         shot(f"{shot_n:02d}-install-progress")
         shot_n += 1
-    print(f"== Done polling. Review screenshots in {args.screenshot_dir} "
+    print(f"== Done polling. Review screenshots in {screenshot_dir} "
           f"to confirm the install actually succeeded. ==")
+    return g
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ssh-port", type=int, required=True)
+    ap.add_argument("--monitor-port", type=int, required=True)
+    ap.add_argument("--live-password", default="ogos")
+    ap.add_argument("--username", default="testuser")
+    ap.add_argument("--password", default="testpass123")
+    ap.add_argument("--hostname", default="ogos-test")
+    ap.add_argument("--fullname", default="Test User")
+    ap.add_argument("--screenshot-dir", default="/tmp/ogos-test-shots")
+    ap.add_argument("--install-timeout", type=int, default=900,
+                     help="seconds to wait for the install job to reach Finish")
+    args = ap.parse_args()
+
+    run_install(
+        ssh_port=args.ssh_port, monitor_port=args.monitor_port,
+        live_password=args.live_password, username=args.username,
+        password=args.password, hostname=args.hostname, fullname=args.fullname,
+        screenshot_dir=args.screenshot_dir, install_timeout=args.install_timeout,
+    )
 
 
 if __name__ == "__main__":
