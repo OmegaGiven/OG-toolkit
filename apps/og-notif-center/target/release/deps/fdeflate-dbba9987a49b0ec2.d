@@ -1,0 +1,11 @@
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/fdeflate-dbba9987a49b0ec2.d: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/compress.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/decompress.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/huffman.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/tables.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libfdeflate-dbba9987a49b0ec2.rlib: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/compress.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/decompress.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/huffman.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/tables.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libfdeflate-dbba9987a49b0ec2.rmeta: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/compress.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/decompress.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/huffman.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/tables.rs
+
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/lib.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/compress.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/decompress.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/huffman.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fdeflate-0.3.7/src/tables.rs:

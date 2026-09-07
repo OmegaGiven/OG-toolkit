@@ -1,0 +1,10 @@
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/smithay_clipboard-fab331541e0b797c.d: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/mime.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/state.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/worker.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libsmithay_clipboard-fab331541e0b797c.rlib: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/mime.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/state.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/worker.rs
+
+/home/omegagiven/.local/src/og-notif-center/target/release/deps/libsmithay_clipboard-fab331541e0b797c.rmeta: /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/lib.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/mime.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/state.rs /home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/worker.rs
+
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/lib.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/mime.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/state.rs:
+/home/omegagiven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smithay-clipboard-0.7.3/src/worker.rs:
