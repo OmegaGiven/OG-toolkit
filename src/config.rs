@@ -85,8 +85,7 @@ fn default_cursor_size() -> i32 {
 }
 
 fn read_sway_cursor_settings() -> Option<(String, i32)> {
-    let path = dirs_home().join(".config/sway/config");
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::sway::sway_config_text();
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("seat seat0 xcursor_theme ") {
@@ -104,8 +103,7 @@ fn read_sway_cursor_settings() -> Option<(String, i32)> {
 /// `output * bg` line. `fit_mode` is the trailing word for image mode
 /// (fill/stretch/center/...), None for solid color lines.
 fn read_sway_wallpaper() -> Option<(String, bool, Option<String>)> {
-    let path = dirs_home().join(".config/sway/config");
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::sway::sway_config_text();
     for line in content.lines() {
         let t = line.trim();
         if !t.starts_with("output") || !t.contains(" bg ") {
@@ -127,8 +125,7 @@ fn read_sway_wallpaper() -> Option<(String, bool, Option<String>)> {
 }
 
 fn read_sway_pointer_accel() -> Option<f32> {
-    let path = dirs_home().join(".config/sway/config");
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::sway::sway_config_text();
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("input type:pointer pointer_accel ") {
@@ -139,8 +136,7 @@ fn read_sway_pointer_accel() -> Option<f32> {
 }
 
 fn read_sway_focus_follows_mouse() -> Option<og_config::FocusFollowsMouse> {
-    let path = dirs_home().join(".config/sway/config");
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::sway::sway_config_text();
     for line in content.lines() {
         if let Some(rest) = line.trim().strip_prefix("focus_follows_mouse ") {
             return og_config::FocusFollowsMouse::from_sway_value(rest.trim());
@@ -150,8 +146,7 @@ fn read_sway_focus_follows_mouse() -> Option<og_config::FocusFollowsMouse> {
 }
 
 fn read_sway_mouse_warping() -> Option<og_config::MouseWarping> {
-    let path = dirs_home().join(".config/sway/config");
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::sway::sway_config_text();
     for line in content.lines() {
         if let Some(rest) = line.trim().strip_prefix("mouse_warping ") {
             return og_config::MouseWarping::from_sway_value(rest.trim());
@@ -161,8 +156,7 @@ fn read_sway_mouse_warping() -> Option<og_config::MouseWarping> {
 }
 
 fn read_sway_keyboard_repeat() -> Option<(i32, i32)> {
-    let path = dirs_home().join(".config/sway/config");
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::sway::sway_config_text();
     let mut rate = None;
     let mut delay = None;
     for line in content.lines() {
