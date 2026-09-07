@@ -13,6 +13,7 @@ use crate::modules::bluetooth::Bluetooth;
 use crate::modules::clipboard::Clipboard;
 use crate::modules::clock::Clock;
 use crate::modules::cpu::Cpu;
+use crate::modules::gpu::Gpu;
 use crate::modules::launcher::Launcher;
 use crate::modules::memory::Memory;
 use crate::modules::network::Network;
@@ -39,6 +40,7 @@ fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRu
                 ModuleKind::Power => Some(Box::new(PowerButton)),
                 ModuleKind::Settings => Some(Box::new(SettingsButton::new())),
                 ModuleKind::Cpu => Some(Box::new(Cpu::new())),
+                ModuleKind::Gpu => Some(Box::new(Gpu::new())),
                 ModuleKind::Memory => Some(Box::new(Memory::new())),
                 ModuleKind::Network => Some(Box::new(Network::new())),
                 ModuleKind::Bluetooth => Some(Box::new(Bluetooth::new())),
