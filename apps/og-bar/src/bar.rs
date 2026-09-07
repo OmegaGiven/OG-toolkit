@@ -279,9 +279,17 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
         }
         Message::Launch(cmd) => {
             let cmd = cmd.clone();
+            // og-bar's own systemd unit has a bare PATH (/usr/local/bin:
+            // /usr/bin, no ~/.local/bin — same root cause as sway's own
+            // exec environment, see known-issues.md) and every launcher
+            // here now spawns bare command names (og-settings, og-clip,
+            // og-notif-center-launch, ...) rather than full paths. Rather
+            // than hunt down every call site, prepend ~/.local/bin once,
+            // here, so bare names resolve regardless of the caller.
+            let home = std::env::var("HOME").unwrap_or_default();
             let _ = std::process::Command::new("sh")
                 .arg("-c")
-                .arg(format!("setsid {cmd} >/dev/null 2>&1 &"))
+                .arg(format!("PATH=\"{home}/.local/bin:$PATH\" setsid {cmd} >/dev/null 2>&1 &"))
                 .spawn();
         }
         Message::PulseaudioToggleMute => {
