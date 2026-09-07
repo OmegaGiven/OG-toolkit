@@ -29,6 +29,21 @@ pub const SPOTS: [(u8, &str, f32); 7] = [
     (0, "FL", -30.0),
 ];
 
+/// the 7 directional slots in clockwise ring order (FC FR SR RR RL SL FL)
+pub const RING: [u8; 7] = [2, 1, 7, 5, 4, 6, 0];
+
+/// true if slots `a` and `b` sit next to each other on the ring
+pub fn adjacent(a: u8, b: u8) -> bool {
+    let (ia, ib) = (RING.iter().position(|&x| x == a), RING.iter().position(|&x| x == b));
+    match (ia, ib) {
+        (Some(i), Some(j)) => {
+            let d = (i as i32 - j as i32).rem_euclid(RING.len() as i32);
+            d == 1 || d == RING.len() as i32 - 1
+        }
+        _ => false,
+    }
+}
+
 fn spot_point(center: Point, radius: f32, deg: f32) -> Point {
     let r = deg.to_radians();
     Point::new(center.x + r.sin() * radius, center.y - r.cos() * radius)

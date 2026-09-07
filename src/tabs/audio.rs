@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::app::{AppColors, Message};
 use crate::audio::{AudioCard, AudioDevice, AudioSnapshot, AudioStream, AudioTarget};
 use crate::audio_meter::Meter;
-use crate::surround::{Mode as SpatialMode, Preset, StreamInfo, TestSignal, CHANNEL_LABELS};
+use crate::surround::{OutDev, Preset, StreamInfo, TestSignal, CHANNEL_LABELS};
 
 /// Live peak meter bar — a thin filled track under a device's volume
 /// slider. `pct` is 0.0-100.0 from `Meter::level_pct()`; `None` means no
@@ -122,21 +122,22 @@ impl AudioSubTab {
 /// Everything the Spatial subtab needs, gathered by `app.rs` so `view`'s
 /// signature only grows by one argument.
 pub struct SpatialUi<'a> {
-    pub mode: SpatialMode,
-    /// preset to use / show when the user picks "Virtual surround"
+    pub route: crate::surround::RouteMode,
     pub preset: Preset,
     pub error: Option<&'a str>,
     pub streams: &'a [StreamInfo],
     pub test_running: bool,
-    /// Surround mode is configured AND is the live default output
-    pub active: bool,
     /// localization soundstage
     pub stage_test_mode: bool,
     pub stage_reveal: Option<u8>,
     pub stage_guess: Option<u8>,
     pub game_target: Option<u8>,
     pub game_hits: u32,
+    pub game_near: u32,
     pub game_rounds: u32,
+    /// real output devices + which one the chain feeds
+    pub outs: &'a [OutDev],
+    pub out_selected: Option<OutDev>,
 }
 
 /// "Hear yourself" toggle — only meaningful for input devices (a source),
@@ -439,24 +440,21 @@ fn spatial_view<'a>(colors: AppColors, s: &SpatialUi<'a>) -> Element<'a> {
     let dim = move |t: &str| text(t.to_string()).size(12).style(move |_| text::Style { color: Some(colors.dim_text) });
     let head = move |t: &str| text(t.to_string()).size(13).style(move |_| text::Style { color: Some(colors.text) });
 
-    let is_stereo = matches!(s.mode, SpatialMode::Stereo);
-    let is_mono = matches!(s.mode, SpatialMode::Mono);
-    let is_surround = matches!(s.mode, SpatialMode::Surround(_));
+    use crate::surround::RouteMode;
+    let is_off = s.route == RouteMode::Off;
+    let is_surround = !is_off; // preset / output picker visible whenever the chain is up
 
     // ── mode selector ───────────────────────────────────────────────
-    let selector = row![
-        seg_button(colors, "Stereo", is_stereo, Message::SpatialStereo),
-        seg_button(colors, "Mono", is_mono, Message::SpatialMono),
-        seg_button(colors, "Virtual surround", is_surround, Message::SpatialSurround),
-    ]
+    let selector = row(RouteMode::ALL.iter().map(|m| {
+        let m = *m;
+        seg_button(colors, m.label(), s.route == m, Message::SpatialRoute(m))
+    }))
     .spacing(6);
 
-    let mode_note = dim(match s.mode {
-        SpatialMode::Stereo => "Passthrough — the real device is the default output. Nothing added.",
-        SpatialMode::Mono => "Left + right summed into both ears. Useful for checking balance and mono compatibility.",
-        SpatialMode::Surround(_) => {
-            "A PipeWire convolver sink is the default output. Stereo is upmixed to 7.1; real 5.1/7.1 (a movie) passes straight in; both are folded to binaural with the HRIR below."
-        }
+    let mode_note = dim(match s.route {
+        RouteMode::Off => "No processing. Movies with 5.1/7.1 get folded to plain stereo like normal.",
+        RouteMode::Auto => "5.1 / 7.1 streams (movies, surround games) route through the HRTF sink automatically. Stereo — music, YouTube, games that do their own 3D audio — is left untouched.",
+        RouteMode::Always => "Every stream goes through the HRTF sink, stereo included.",
     });
 
     let preset_row: Element<'a> = if is_surround {
@@ -471,13 +469,7 @@ fn spatial_view<'a>(colors: AppColors, s: &SpatialUi<'a>) -> Element<'a> {
         column![].into()
     };
 
-    let banner_text: Option<String> = if let Some(e) = s.error {
-        Some(e.to_string())
-    } else if is_surround && !s.active {
-        Some("Virtual surround is set but NOT the active output — something else grabbed the default device. Click \"Virtual surround\" again to re-activate.".to_string())
-    } else {
-        None
-    };
+    let banner_text: Option<String> = s.error.map(|e| e.to_string());
     let error_banner: Element<'a> = match banner_text {
         Some(e) => container(text(e).size(12).style(move |_| text::Style { color: Some(Color::WHITE) }))
             .padding(10)
@@ -491,8 +483,22 @@ fn spatial_view<'a>(colors: AppColors, s: &SpatialUi<'a>) -> Element<'a> {
         None => column![].into(),
     };
 
+    let out_row: Element<'a> = if is_off {
+        column![].into()
+    } else {
+        row![
+            head("Send binaural output to"),
+            pick_list(s.outs, s.out_selected.clone(), Message::SpatialOutputSelected),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+
     let mode_card = container(
-        column![head("Output mode"), selector, mode_note, preset_row, error_banner].spacing(10).padding(14),
+        column![head("Output mode"), selector, mode_note, preset_row, out_row, error_banner]
+            .spacing(10)
+            .padding(14),
     )
     .width(Length::Fill)
     .style(move |_| container::Style {
@@ -507,22 +513,28 @@ fn spatial_view<'a>(colors: AppColors, s: &SpatialUi<'a>) -> Element<'a> {
     } else {
         column(s.streams.iter().map(|st| {
             let surround = st.channels > 2;
-            let tag_color = if surround { colors.accent } else { colors.dim_text };
+            let in_color = if surround { colors.accent } else { colors.dim_text };
             let name = if st.corked { format!("{} (paused)", st.app) } else { st.app.clone() };
+            let via = if st.via_hrtf { "HRTF" } else { "direct" };
+            let via_color = if st.via_hrtf { colors.accent } else { colors.dim_text };
+            // "App    5.1 in  →  HRTF  →  Headphones"
             row![
                 text(name).size(13).style(move |_| text::Style { color: Some(colors.text) }),
                 iced::widget::horizontal_space(),
-                text(st.layout.clone()).size(12).style(move |_| text::Style { color: Some(tag_color) }),
-                text(st.spec.clone()).size(11).style(move |_| text::Style { color: Some(colors.dim_text) }),
+                text(format!("{} in", st.layout)).size(12).style(move |_| text::Style { color: Some(in_color) }),
+                text("\u{2192}").size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
+                text(via).size(12).style(move |_| text::Style { color: Some(via_color) }),
+                text("\u{2192}").size(12).style(move |_| text::Style { color: Some(colors.dim_text) }),
+                text(st.dest.clone()).size(12).style(move |_| text::Style { color: Some(colors.text) }),
             ]
-            .spacing(12)
+            .spacing(8)
             .align_y(iced::Alignment::Center)
             .into()
         }))
         .spacing(8)
         .into()
     };
-    let streams_card = container(column![head("What's playing (source channels)"), stream_rows].spacing(10).padding(14))
+    let streams_card = container(column![head("What's playing  (in \u{2192} path \u{2192} out)"), stream_rows].spacing(10).padding(14))
         .width(Length::Fill)
         .style(move |_| container::Style {
             background: Some(Background::Color(colors.sec_bg)),
@@ -589,14 +601,23 @@ fn spatial_view<'a>(colors: AppColors, s: &SpatialUi<'a>) -> Element<'a> {
 
     let stage_controls: Element<'a> = if s.stage_test_mode {
         let score = if s.game_rounds > 0 {
-            format!("{} / {}  ({}%)", s.game_hits, s.game_rounds, s.game_hits * 100 / s.game_rounds)
+            // exact = 1, adjacent = 0.5
+            let weighted = (s.game_hits * 100 + s.game_near * 50) / s.game_rounds;
+            format!(
+                "exact {} · close {} / {}  ({}%)",
+                s.game_hits, s.game_near, s.game_rounds, weighted
+            )
         } else {
             "no rounds yet".to_string()
         };
         let verdict: Element<'a> = match (s.stage_guess, s.stage_reveal) {
-            (Some(g), Some(t)) if g == t => text("\u{2713} correct")
+            (Some(g), Some(t)) if g == t => text("\u{2713} spot on")
                 .size(13)
                 .style(move |_| text::Style { color: Some(colors.accent) })
+                .into(),
+            (Some(g), Some(t)) if crate::soundstage::adjacent(g, t) => text("\u{2248} one off")
+                .size(13)
+                .style(move |_| text::Style { color: Some(Color { r: 0.82, g: 0.6, b: 0.15, a: 1.0 }) })
                 .into(),
             (Some(_), Some(_)) => text("\u{2717} missed")
                 .size(13)

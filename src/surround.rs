@@ -121,6 +121,20 @@ impl std::fmt::Display for Preset {
     }
 }
 
+/// A real output device the binaural chain can be pointed at (name +
+/// friendly label), for the "send output to" picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutDev {
+    pub name: String,
+    pub label: String,
+}
+
+impl std::fmt::Display for OutDev {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Stereo,
@@ -131,6 +145,75 @@ pub enum Mode {
 impl Default for Mode {
     fn default() -> Self {
         Mode::Stereo
+    }
+}
+
+/// How the `spatial` helper + its autoroute daemon are set to behave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RouteMode {
+    #[default]
+    Off,
+    /// 5.1/7.1 streams -> HRTF, stereo left on the real device
+    Auto,
+    /// every stream -> HRTF
+    Always,
+}
+
+impl RouteMode {
+    pub const ALL: [RouteMode; 3] = [RouteMode::Off, RouteMode::Auto, RouteMode::Always];
+    pub fn label(self) -> &'static str {
+        match self {
+            RouteMode::Off => "Off",
+            RouteMode::Auto => "Auto (5.1/7.1 only)",
+            RouteMode::Always => "Always on",
+        }
+    }
+    fn arg(self) -> &'static str {
+        match self {
+            RouteMode::Off => "off",
+            RouteMode::Auto => "auto",
+            RouteMode::Always => "always",
+        }
+    }
+}
+
+/// Current mode from `~/.local/state/spatial-mode` (default Off).
+pub fn route_mode() -> RouteMode {
+    match std::fs::read_to_string(home().join(".local/state/spatial-mode"))
+        .map(|s| s.trim().to_string())
+        .as_deref()
+    {
+        Ok("auto") => RouteMode::Auto,
+        Ok("always") => RouteMode::Always,
+        _ => RouteMode::Off,
+    }
+}
+
+/// The preset the helper will use, from `~/.local/state/spatial-preset`.
+pub fn saved_preset() -> Preset {
+    std::fs::read_to_string(home().join(".local/state/spatial-preset"))
+        .ok()
+        .and_then(|s| Preset::from_slug(s.trim()))
+        .unwrap_or(Preset::Atmos)
+}
+
+/// Drive the `spatial` helper: `spatial <mode> <preset> <device>`.
+pub fn set_route(m: RouteMode, preset: Preset, device: &str) -> Result<(), String> {
+    let mut args = vec![m.arg().to_string()];
+    if m != RouteMode::Off {
+        args.push(preset.slug().to_string());
+        if !device.is_empty() && device != SINK_NAME {
+            args.push(device.to_string());
+        }
+    }
+    let out = Command::new("spatial")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("couldn't run `spatial`: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
 
@@ -184,35 +267,40 @@ fn surround_conf(p: Preset, wav: &str, hw: &str) -> String {
     // stable node identity (no upmix / no forced latency — both caused
     // static on marginal USB DACs; 5.1/7.1 maps straight in, stereo stays
     // stereo through the front-L/R paths)
+    // Plain ASCII description — an em-dash or the preset's own punctuation
+    // (e.g. "DTS Headphone:X") in here gets the value rejected and the sink
+    // ends up nameless ("(null)") in every device list.
     g = g.replace(
         "node.name      = \"effect_input.virtual-surround-7.1-hesuvi\"",
-        &format!(
-            "node.name      = \"{SINK_NAME}\"\n                node.description = \"OG Spatial — Virtual Surround ({})\"",
-            p.label()
-        ),
+        &format!("node.name      = \"{SINK_NAME}\"\n                node.description = \"OG Spatial (Virtual Surround)\""),
     );
     g = g.replace(
         "node.name      = \"effect_output.virtual-surround-7.1-hesuvi\"",
         "node.name      = \"effect_output.og-spatial\"",
     );
-    // pin the real output device (belt-and-braces with relink_output)
+    // Pin the real output device. `node.passive = true` lets WirePlumber
+    // ignore target.object and re-home the output to whatever it thinks is
+    // default; a non-passive output + dont-reconnect makes it a normal
+    // stream that connects once to target.object and stays put.
     g = g.replace(
         "node.passive   = true",
-        &format!("node.passive   = true\n                target.object  = {hw:?}"),
+        &format!(
+            "node.passive   = false\n                target.object  = {hw:?}\n                node.dont-reconnect = true"
+        ),
     );
     format!("{MARKER} surround:{}\n{g}", p.slug())
 }
 
 /// Minimal L+R -> mono filter-chain sink. Both mixers get both inputs, so
 /// each ear hears the full mono sum.
-fn mono_conf() -> String {
+fn mono_conf(hw: &str) -> String {
     format!(
         r#"{MARKER} mono
 context.modules = [
     {{ name = libpipewire-module-filter-chain
         flags = [ nofail ]
         args = {{
-            node.description = "OG Spatial — Mono"
+            node.description = "OG Spatial (Mono)"
             media.name       = "OG Spatial Mono"
             filter.graph = {{
                 nodes = [
@@ -225,13 +313,16 @@ context.modules = [
             }}
             capture.props = {{
                 node.name      = "{SINK_NAME}"
+                node.description = "OG Spatial (Mono)"
                 media.class    = Audio/Sink
                 audio.channels = 2
                 audio.position = [ FL FR ]
             }}
             playback.props = {{
                 node.name      = "effect_output.og-spatial"
-                node.passive   = true
+                node.passive   = false
+                target.object  = {hw:?}
+                node.dont-reconnect = true
                 audio.channels = 2
                 audio.position = [ FL FR ]
             }}
@@ -265,6 +356,26 @@ fn systemctl(args: &[&str]) -> bool {
 
 fn sink_present() -> bool {
     pactl(&["list", "short", "sinks"]).contains(SINK_NAME)
+}
+
+/// Force BOTH the live and the *configured* (sticky) default sink to
+/// `name`. `pactl set-default-sink` only updates the configured value, and
+/// if the previous configured value was our effect sink WirePlumber can
+/// snap back to it the moment it reappears — so also poke the metadata
+/// directly.
+fn force_default(name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    pactl(&["set-default-sink", name]);
+    let json = format!("{{ \"name\": \"{name}\" }}");
+    for key in ["default.configured.audio.sink", "default.audio.sink"] {
+        let _ = Command::new("pw-metadata")
+            .args(["0", key, &json])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
 /// WirePlumber ignores `target.object` on the passive effect-output node
@@ -338,6 +449,17 @@ pub fn current() -> Mode {
     }
 }
 
+/// The real output device the *current* drop-in is pinned to (its
+/// `target.object`), if surround/mono is already configured. Survives a
+/// preset switch where the live default has become the effect sink.
+pub fn configured_hw() -> Option<String> {
+    let txt = std::fs::read_to_string(conf_path()).ok()?;
+    let line = txt.lines().find(|l| l.contains("target.object"))?;
+    let start = line.find('"')? + 1;
+    let end = line[start..].find('"')? + start;
+    Some(line[start..end].to_string())
+}
+
 /// The real hardware sink to fall back to — the current default unless it's
 /// already our effect sink, in which case the first non-effect sink.
 pub fn hardware_default() -> String {
@@ -359,17 +481,40 @@ pub fn hardware_default() -> String {
 pub fn apply(mode: Mode, hw: &str) -> Result<Mode, String> {
     match mode {
         Mode::Stereo => {
+            // Figure out the real device to hand playback back to *before*
+            // tearing the chain down.
+            let back: String = if !hw.is_empty() && hw != SINK_NAME {
+                hw.to_string()
+            } else {
+                configured_hw()
+                    .filter(|s| !s.is_empty() && s != SINK_NAME)
+                    .unwrap_or_else(hardware_default)
+            };
+            force_default(&back);
             systemctl(&["disable", "--now", SERVICE]);
             let _ = std::fs::remove_file(conf_path());
-            if !hw.is_empty() {
-                pactl(&["set-default-sink", hw]);
-                move_streams_to(hw);
+            force_default(&back);
+            if !back.is_empty() {
+                move_streams_to(&back);
             }
             Ok(Mode::Stereo)
         }
         Mode::Mono | Mode::Surround(_) => {
+            // Resolve the real output device. `hw` from the caller can be
+            // empty or (mid preset-switch) the effect sink itself — neither
+            // is usable. Fall back to what the existing drop-in was pinned
+            // to, then to the live hardware default.
+            let hw_owned: String = if !hw.is_empty() && hw != SINK_NAME {
+                hw.to_string()
+            } else {
+                configured_hw()
+                    .filter(|s| !s.is_empty() && s != SINK_NAME)
+                    .unwrap_or_else(hardware_default)
+            };
+            let hw = hw_owned.as_str();
+
             let conf = match mode {
-                Mode::Mono => mono_conf(),
+                Mode::Mono => mono_conf(hw),
                 Mode::Surround(p) => {
                     let wav = ensure_hrir(p).map_err(|e| format!("Couldn't unpack HRIR file: {e}"))?;
                     surround_conf(p, &wav.to_string_lossy(), hw)
@@ -383,6 +528,11 @@ pub fn apply(mode: Mode, hw: &str) -> Result<Mode, String> {
                     f.write_all(conf.as_bytes())
                 })
                 .map_err(|e| format!("Couldn't write the PipeWire drop-in: {e}"))?;
+
+            // Point the default at the real device BEFORE the restart drops
+            // the effect sink — otherwise the default briefly references a
+            // dead node and PipeWire spawns an auto-null in its place.
+            force_default(hw);
 
             // restart, not start — picks up a preset change on an already
             // running unit too
@@ -404,9 +554,7 @@ pub fn apply(mode: Mode, hw: &str) -> Result<Mode, String> {
             if !ok {
                 let _ = std::fs::remove_file(&path);
                 systemctl(&["disable", "--now", SERVICE]);
-                if !hw.is_empty() {
-                    pactl(&["set-default-sink", hw]);
-                }
+                force_default(hw);
                 return Err("The effect sink never appeared — your setup can't build this chain. Reverted to Stereo.".into());
             }
 
@@ -415,7 +563,7 @@ pub fn apply(mode: Mode, hw: &str) -> Result<Mode, String> {
             if !hw.is_empty() {
                 pactl(&["set-sink-volume", hw, "100%"]);
             }
-            pactl(&["set-default-sink", SINK_NAME]);
+            force_default(SINK_NAME);
             move_streams_to(SINK_NAME);
             Ok(mode)
         }
@@ -433,6 +581,10 @@ pub struct StreamInfo {
     /// friendly layout name: "mono" / "stereo" / "quad" / "5.1" / "7.1" / "6ch"
     pub layout: String,
     pub corked: bool,
+    /// the device this stream ends up on (friendly label)
+    pub dest: String,
+    /// true if it is currently going through the HRTF sink
+    pub via_hrtf: bool,
 }
 
 /// Read the live playback streams straight from `pactl -f json`, keeping
@@ -448,8 +600,29 @@ pub fn active_streams() -> Vec<StreamInfo> {
         #[serde(default)]
         corked: bool,
         #[serde(default)]
+        sink: i64,
+        #[serde(default)]
         properties: std::collections::HashMap<String, String>,
     }
+    #[derive(serde::Deserialize)]
+    struct RawSink {
+        index: i64,
+        name: String,
+        #[serde(default)]
+        description: String,
+    }
+    let sink_out = Command::new("pactl")
+        .args(["-f", "json", "list", "sinks"])
+        .output()
+        .map(|o| o.stdout)
+        .unwrap_or_default();
+    let sinks: Vec<RawSink> = serde_json::from_slice(&sink_out).unwrap_or_default();
+    let sink_name = |id: i64| sinks.iter().find(|s| s.index == id);
+    // the real device the HRTF chain feeds, for the "-> device" label
+    let hrtf_out = configured_hw()
+        .and_then(|n| sinks.iter().find(|s| s.name == n).map(|s| s.description.clone()))
+        .unwrap_or_default();
+
     let out = Command::new("pactl")
         .args(["-f", "json", "list", "sink-inputs"])
         .output()
@@ -458,6 +631,13 @@ pub fn active_streams() -> Vec<StreamInfo> {
     let raws: Vec<Raw> = serde_json::from_slice(&out).unwrap_or_default();
     raws.into_iter()
         .map(|r| {
+            let cur = sink_name(r.sink);
+            let via_hrtf = cur.map(|s| s.name == SINK_NAME).unwrap_or(false);
+            let dest = if via_hrtf {
+                if hrtf_out.is_empty() { "headphones".to_string() } else { hrtf_out.clone() }
+            } else {
+                cur.map(|s| s.description.clone()).unwrap_or_else(|| "?".to_string())
+            };
             let channels = r.channel_map.split(',').filter(|s| !s.is_empty()).count() as u8;
             let layout = match channels {
                 1 => "mono".to_string(),
@@ -475,7 +655,15 @@ pub fn active_streams() -> Vec<StreamInfo> {
                 .or_else(|| r.properties.get("node.name"))
                 .cloned()
                 .unwrap_or_else(|| "Stream".to_string());
-            StreamInfo { app, spec: r.sample_specification, channels, layout, corked: r.corked }
+            StreamInfo {
+                app,
+                spec: r.sample_specification,
+                channels,
+                layout,
+                corked: r.corked,
+                dest,
+                via_hrtf,
+            }
         })
         .collect()
 }
@@ -562,20 +750,52 @@ pub fn play(sig: TestSignal) -> Option<u32> {
     cmd.spawn().ok().map(|child| child.id())
 }
 
-/// Fire one channel with plain pink noise (no spoken name) — for the
-/// soundstage / localization game where announcing the channel would give
-/// the answer away. `n` is a slot 0-7 (FL FR FC LFE RL RR SL SR).
+/// 8-channel WAV with a short broadband noise-burst train in exactly one
+/// channel (`slot` 0-7 = FL FR FC LFE RL RR SL SR). Sharp repeated onsets +
+/// HF energy localise far better than continuous pink noise. Cached.
+fn stage_wav(slot: u8) -> Option<PathBuf> {
+    let path = home().join(format!(".local/share/og-settings/stage_ch{slot}.wav"));
+    if std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+        return Some(path);
+    }
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    // one clean 523 Hz (C5) tone, ~1.1 s, soft fades. panned straight from
+    // the mono source into channel `slot` (an upmix before pan leaves c0
+    // empty). Pure tones localise worse than noise, but the user asked for
+    // a tone.
+    let ok = Command::new("ffmpeg")
+        .args([
+            "-y", "-v", "error", "-f", "lavfi", "-i",
+            "sine=frequency=440:duration=1.1:sample_rate=48000",
+            "-af",
+            // ffmpeg's `sine` is only ~-18 dBFS, so lift it ~+14 dB first
+            &format!("volume=5,afade=t=in:d=0.02,afade=t=out:st=0.95:d=0.15,pan=7.1|c{slot}=c0"),
+            "-c:a", "pcm_s16le",
+        ])
+        .arg(&path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    ok.then_some(path)
+}
+
+/// Fire one channel with an unnamed burst train — for the soundstage /
+/// localization game where announcing the channel would give it away.
 pub fn play_channel_blind(n: u8) -> Option<u32> {
-    const SPK: [u8; 8] = [1, 3, 2, 8, 6, 5, 7, 4]; // slot(FL FR FC LFE RL RR SL SR) -> speaker-test -s (its 8ch order: FL FC FR SR RR RL SL LFE)
-    let s = SPK.get(n as usize).copied().unwrap_or(1);
-    Command::new("speaker-test")
-        .args(["-D", "pipewire", "-c", "8", "-t", "pink", "-l", "1", "-s", &s.to_string()])
+    let wav = stage_wav(n)?;
+    let mut c = Command::new("pw-play");
+    if sink_present() {
+        c.args(["--target", SINK_NAME]);
+    }
+    c.arg(wav)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .ok()
-        .map(|c| c.id())
+        .map(|ch| ch.id())
 }
 
 pub fn stop(pid: u32) {

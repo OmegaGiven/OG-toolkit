@@ -200,16 +200,16 @@ pub enum Message {
     /// the atomics `audio_meter::Meter` threads are already updating.
     AudioMeterTick,
 
-    // Audio tab → Spatial subtab (experimental headphone surround lab)
-    SpatialStereo,
-    SpatialMono,
-    SpatialSurround,
+    // Audio tab → Spatial subtab (headphone HRTF surround)
+    SpatialRoute(crate::surround::RouteMode),
     SpatialPresetSelected(crate::surround::Preset),
-    /// result of applying a mode off the UI thread
-    SpatialApplied(Result<crate::surround::Mode, String>),
+    /// result of driving the `spatial` helper off the UI thread
+    SpatialRouted(Result<(), String>),
     SpatialStreamsLoaded(Vec<crate::surround::StreamInfo>),
     SpatialTest(crate::surround::TestSignal),
     SpatialTestStop,
+    /// pick which real device the binaural output feeds
+    SpatialOutputSelected(crate::surround::OutDev),
     /// Spatial subtab → localization soundstage
     SpatialStageMode(bool), // false = free play, true = guess-the-direction test
     SpatialStageClick(u8),  // a direction marker was clicked
@@ -583,16 +583,15 @@ pub struct App {
     pub mic_monitor: Option<(String, u32)>,
 
     // Audio tab → Spatial subtab
-    pub spatial_mode: crate::surround::Mode,
-    /// HRIR preset to use when the user switches to Virtual surround
+    pub spatial_route: crate::surround::RouteMode,
     pub spatial_preset: crate::surround::Preset,
     pub spatial_error: Option<String>,
     pub spatial_streams: Vec<crate::surround::StreamInfo>,
-    /// HRTF sink is configured AND is the live default output (not bypassed
-    /// by the user switching devices on the Output subtab)
-    pub spatial_active: bool,
-    /// real sink to route through / fall back to, captured when the tab opens
-    pub spatial_hw_sink: String,
+    /// true while the `spatial` helper is running
+    pub spatial_busy: bool,
+    /// real output devices the chain can feed, + the chosen one's name
+    pub spatial_outs: Vec<crate::surround::OutDev>,
+    pub spatial_out: Option<String>,
     /// PID of a running test tone, so it can be stopped / cleaned up
     pub spatial_test: Option<u32>,
     /// localization soundstage
@@ -601,9 +600,8 @@ pub struct App {
     pub stage_guess: Option<u8>,
     pub game_target: Option<u8>,
     pub game_hits: u32,
+    pub game_near: u32,
     pub game_rounds: u32,
-    /// true while an apply() task is in flight — suppresses re-entrancy
-    pub spatial_busy: bool,
 
     // Devices tab
     pub usb_devices: Vec<crate::devices::UsbDevice>,
@@ -809,23 +807,21 @@ impl App {
                 audio_meters: HashMap::new(),
                 mic_monitor: None,
 
-                spatial_mode: crate::surround::current(),
-                spatial_preset: match crate::surround::current() {
-                    crate::surround::Mode::Surround(p) => p,
-                    _ => crate::surround::Preset::Atmos,
-                },
+                spatial_route: crate::surround::route_mode(),
+                spatial_preset: crate::surround::saved_preset(),
                 spatial_error: None,
                 spatial_streams: Vec::new(),
-                spatial_active: false,
+                spatial_busy: false,
+                spatial_outs: Vec::new(),
+                spatial_out: None,
+                spatial_test: None,
                 stage_test_mode: false,
                 stage_reveal: None,
                 stage_guess: None,
                 game_target: None,
                 game_hits: 0,
+                game_near: 0,
                 game_rounds: 0,
-                spatial_hw_sink: String::new(),
-                spatial_test: None,
-                spatial_busy: false,
 
                 usb_devices: Vec::new(),
                 input_devices: Vec::new(),
@@ -906,16 +902,10 @@ impl App {
                     return load_update_status();
                 }
                 if self.current_tab == Tab::Audio {
-                    // Spatial subtab: recover the mode from disk (another
-                    // tool or a previous session may have changed it) and
-                    // remember the real sink to fall back to.
-                    self.spatial_mode = crate::surround::current();
-                    self.spatial_preset = match self.spatial_mode {
-                        crate::surround::Mode::Surround(p) => p,
-                        _ => self.spatial_preset,
-                    };
-                    self.spatial_hw_sink = crate::surround::hardware_default();
-                    self.spatial_active = crate::surround::is_active();
+                    // Spatial subtab: recover mode + preset from disk (the
+                    // `spatial` helper / autoroute daemon may have changed them).
+                    self.spatial_route = crate::surround::route_mode();
+                    self.spatial_preset = crate::surround::saved_preset();
                     return Task::batch([
                         Task::perform(
                             async { tokio::task::spawn_blocking(audio::snapshot).await.unwrap_or_default() },
@@ -1432,31 +1422,40 @@ impl App {
                 self.sync_audio_meters();
             }
             Message::AudioMeterTick => {}
-            Message::AudioSnapshotLoaded(s) => { self.audio_snapshot = s; self.sync_audio_meters(); }
+            Message::AudioSnapshotLoaded(s) => {
+                self.audio_snapshot = s;
+                self.sync_audio_meters();
+                // refresh the Spatial "send output to" list from the real sinks
+                self.spatial_outs = self
+                    .audio_snapshot
+                    .sinks
+                    .iter()
+                    .filter(|d| !d.name.starts_with("effect_input.") && !d.name.starts_with("effect_output."))
+                    .map(|d| crate::surround::OutDev { name: d.name.clone(), label: d.description.clone() })
+                    .collect();
+                if self.spatial_out.as_deref().map(|n| !self.spatial_outs.iter().any(|o| o.name == n)).unwrap_or(true) {
+                    // nothing chosen yet, or the chosen device vanished
+                    self.spatial_out = Some(crate::surround::configured_hw().unwrap_or_else(crate::surround::hardware_default));
+                }
+            }
 
-            Message::SpatialStereo => return self.apply_spatial(crate::surround::Mode::Stereo),
-            Message::SpatialMono => return self.apply_spatial(crate::surround::Mode::Mono),
-            Message::SpatialSurround => {
-                let m = crate::surround::Mode::Surround(self.spatial_preset);
-                return self.apply_spatial(m);
+            Message::SpatialRoute(m) => {
+                self.spatial_route = m;
+                return self.apply_route();
             }
             Message::SpatialPresetSelected(p) => {
                 self.spatial_preset = p;
-                if matches!(self.spatial_mode, crate::surround::Mode::Surround(_)) {
-                    return self.apply_spatial(crate::surround::Mode::Surround(p));
+                if self.spatial_route != crate::surround::RouteMode::Off {
+                    return self.apply_route();
                 }
             }
-            Message::SpatialApplied(res) => {
+            Message::SpatialRouted(res) => {
                 self.spatial_busy = false;
-                match res {
-                    Ok(m) => { self.spatial_mode = m; self.spatial_error = None; }
-                    Err(e) => { self.spatial_error = Some(e); self.spatial_mode = crate::surround::Mode::Stereo; }
-                }
-                self.spatial_active = crate::surround::is_active();
+                self.spatial_error = res.err();
+                self.spatial_route = crate::surround::route_mode();
             }
             Message::SpatialStreamsLoaded(v) => {
                 self.spatial_streams = v;
-                self.spatial_active = crate::surround::is_active();
             }
             Message::SpatialTest(sig) => {
                 if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
@@ -1465,11 +1464,21 @@ impl App {
             Message::SpatialTestStop => {
                 if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
             }
+            Message::SpatialOutputSelected(dev) => {
+                self.spatial_out = Some(dev.name);
+                if self.spatial_route != crate::surround::RouteMode::Off {
+                    return self.apply_route();
+                }
+            }
             Message::SpatialStageMode(t) => {
                 self.stage_test_mode = t;
                 self.stage_reveal = None;
                 self.stage_guess = None;
                 self.game_target = None;
+                // fresh scoreboard each time the test is (re)started
+                self.game_hits = 0;
+                self.game_near = 0;
+                self.game_rounds = 0;
             }
             Message::SpatialGameNext => {
                 if let Some(pid) = self.spatial_test.take() { crate::surround::stop(pid); }
@@ -1493,6 +1502,8 @@ impl App {
                         self.game_rounds += 1;
                         if slot == target {
                             self.game_hits += 1;
+                        } else if crate::soundstage::adjacent(slot, target) {
+                            self.game_near += 1;
                         }
                     }
                 } else {
@@ -2428,26 +2439,30 @@ impl App {
         }
     }
 
-    /// Apply a Spatial output mode off the UI thread (it shells out to
-    /// systemctl + pactl and polls for the effect sink). Result comes back
-    /// as `Message::SpatialApplied`.
-    fn apply_spatial(&mut self, target: crate::surround::Mode) -> Task<Message> {
+    /// Drive the `spatial` helper off the UI thread (it writes the drop-in,
+    /// bounces the filter-chain and toggles the autoroute service). Result
+    /// comes back as `Message::SpatialRouted`.
+    fn apply_route(&mut self) -> Task<Message> {
         if self.spatial_busy {
             return Task::none();
         }
         self.spatial_busy = true;
         self.spatial_error = None;
-        if self.spatial_hw_sink.is_empty() {
-            self.spatial_hw_sink = crate::surround::hardware_default();
-        }
-        let hw = self.spatial_hw_sink.clone();
+        let mode = self.spatial_route;
+        let preset = self.spatial_preset;
+        let dev = self
+            .spatial_out
+            .clone()
+            .filter(|n| !n.is_empty() && n != crate::surround::SINK_NAME)
+            .or_else(crate::surround::configured_hw)
+            .unwrap_or_else(crate::surround::hardware_default);
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || crate::surround::apply(target, &hw))
+                tokio::task::spawn_blocking(move || crate::surround::set_route(mode, preset, &dev))
                     .await
                     .unwrap_or_else(|_| Err("background task failed".to_string()))
             },
-            Message::SpatialApplied,
+            Message::SpatialRouted,
         )
     }
 
@@ -3158,18 +3173,24 @@ impl App {
                 &self.audio_meters,
                 self.mic_monitor.as_ref(),
                 tabs::audio::SpatialUi {
-                    mode: self.spatial_mode,
+                    route: self.spatial_route,
                     preset: self.spatial_preset,
                     error: self.spatial_error.as_deref(),
                     streams: &self.spatial_streams,
                     test_running: self.spatial_test.is_some(),
-                    active: self.spatial_active,
                     stage_test_mode: self.stage_test_mode,
                     stage_reveal: self.stage_reveal,
                     stage_guess: self.stage_guess,
                     game_target: self.game_target,
                     game_hits: self.game_hits,
+                    game_near: self.game_near,
                     game_rounds: self.game_rounds,
+                    outs: &self.spatial_outs,
+                    out_selected: self
+                        .spatial_out
+                        .as_ref()
+                        .and_then(|n| self.spatial_outs.iter().find(|o| &o.name == n))
+                        .cloned(),
                 },
             ),
             Tab::Printing => tabs::printing::view(colors, self.cups_running, &self.printers, &self.detected_printers),
