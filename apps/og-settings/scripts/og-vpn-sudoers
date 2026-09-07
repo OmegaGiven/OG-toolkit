@@ -1,0 +1,2 @@
+Defaults!/usr/local/bin/og-vpn-apply env_keep += "DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR"
+omegagiven ALL=(root) NOPASSWD: /usr/local/bin/og-vpn-apply
