@@ -149,6 +149,22 @@ pub struct Config {
     pub cursor_theme: String,
     #[serde(default = "default_cursor_size")]
     pub cursor_size: i32,
+    /// sway's own `focus_follows_mouse` setting — whether hovering a
+    /// window (no click) gives it keyboard focus.
+    #[serde(default)]
+    pub focus_follows_mouse: FocusFollowsMouse,
+    /// sway's own `mouse_warping` setting — whether the cursor jumps when
+    /// focus changes via a non-mouse action (keybind, workspace switch).
+    #[serde(default)]
+    pub mouse_warping: MouseWarping,
+    /// sway's `input type:keyboard repeat_rate` (characters/sec once a key
+    /// is held past `keyboard_repeat_delay`).
+    #[serde(default = "default_keyboard_repeat_rate")]
+    pub keyboard_repeat_rate: i32,
+    /// sway's `input type:keyboard repeat_delay` (ms held before repeat
+    /// kicks in).
+    #[serde(default = "default_keyboard_repeat_delay")]
+    pub keyboard_repeat_delay: i32,
     /// "image" or "color".
     #[serde(default = "default_wallpaper_mode")]
     pub wallpaper_mode: String,
@@ -162,6 +178,11 @@ pub struct Config {
     /// (center = native resolution, unscaled).
     #[serde(default = "default_wallpaper_fit")]
     pub wallpaper_fit: String,
+    /// Folder name under `~/.local/share/og-wallpaper/themes/` — only
+    /// meaningful when `wallpaper_mode == "animated"`; empty means
+    /// og-wallpaper falls back to its own built-in demo scene.
+    #[serde(default)]
+    pub wallpaper_animated_theme: String,
     /// Read directly by the standalone `og-notify` daemon, not og-settings
     /// — flashes a rain/glow/wind/sparkle overlay on every `Notify` dbus
     /// call.
@@ -222,6 +243,8 @@ fn default_clock_12h() -> bool { false }
 fn default_corner_radius() -> f32 { 0.0 }
 fn default_color_variance_amount() -> f32 { 0.06 }
 fn default_cursor_size() -> i32 { 24 }
+fn default_keyboard_repeat_rate() -> i32 { 25 }
+fn default_keyboard_repeat_delay() -> i32 { 600 }
 fn default_wallpaper_mode() -> String { "image".into() }
 fn default_wallpaper_color() -> String { "#1a1a2e".into() }
 fn default_wallpaper_fit() -> String { "fill".into() }
@@ -266,10 +289,15 @@ impl Default for Config {
             mouse_sensitivity: 0.0,
             cursor_theme: String::new(),
             cursor_size: default_cursor_size(),
+            focus_follows_mouse: FocusFollowsMouse::default(),
+            mouse_warping: MouseWarping::default(),
+            keyboard_repeat_rate: default_keyboard_repeat_rate(),
+            keyboard_repeat_delay: default_keyboard_repeat_delay(),
             wallpaper_mode: default_wallpaper_mode(),
             wallpaper_path: String::new(),
             wallpaper_color: default_wallpaper_color(),
             wallpaper_fit: default_wallpaper_fit(),
+            wallpaper_animated_theme: String::new(),
             notif_fx_enabled: false,
             notif_fx_effect: default_notif_fx_effect(),
             notif_fx_color: default_notif_fx_color(),
@@ -311,6 +339,85 @@ fn bar_config_path() -> PathBuf {
     p
 }
 
+/// sway's own three focus_follows_mouse values (`man 5 sway`) — "no"
+/// requires a click to focus a window, "yes" focuses on hover, "always"
+/// re-focuses on every pointer motion over an already-focused window too
+/// (rare, but sway exposes it, so this does too).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum FocusFollowsMouse {
+    #[default]
+    No,
+    Yes,
+    Always,
+}
+
+impl FocusFollowsMouse {
+    pub fn sway_value(&self) -> &'static str {
+        match self {
+            FocusFollowsMouse::No => "no",
+            FocusFollowsMouse::Yes => "yes",
+            FocusFollowsMouse::Always => "always",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FocusFollowsMouse::No => "Click to focus",
+            FocusFollowsMouse::Yes => "Hover to focus",
+            FocusFollowsMouse::Always => "Always (re-focus on hover)",
+        }
+    }
+
+    pub fn from_sway_value(v: &str) -> Option<Self> {
+        match v {
+            "no" => Some(FocusFollowsMouse::No),
+            "yes" => Some(FocusFollowsMouse::Yes),
+            "always" => Some(FocusFollowsMouse::Always),
+            _ => None,
+        }
+    }
+}
+
+/// sway's own `mouse_warping` setting — whether/where the cursor jumps
+/// when focus changes without the mouse moving (a keybind, a workspace
+/// switch). Companion to `focus_follows_mouse`: with hover-to-focus on,
+/// warping the cursor to match a keybind-driven focus change avoids the
+/// two fighting each other.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum MouseWarping {
+    #[default]
+    Output,
+    Container,
+    None,
+}
+
+impl MouseWarping {
+    pub fn sway_value(&self) -> &'static str {
+        match self {
+            MouseWarping::Output => "output",
+            MouseWarping::Container => "container",
+            MouseWarping::None => "none",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            MouseWarping::Output => "On output change",
+            MouseWarping::Container => "On container focus",
+            MouseWarping::None => "Never",
+        }
+    }
+
+    pub fn from_sway_value(v: &str) -> Option<Self> {
+        match v {
+            "output" => Some(MouseWarping::Output),
+            "container" => Some(MouseWarping::Container),
+            "none" => Some(MouseWarping::None),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum Edge {
     #[default]
@@ -320,37 +427,66 @@ pub enum Edge {
     Right,
 }
 
+/// Which output(s) og-bar creates a surface on. `AllScreens` (the
+/// original/default behavior) puts one bar on every connected output;
+/// `SingleOutput` pins it to one output by compositor name (e.g. "DP-3"),
+/// so there's exactly one surface and no cross-output focus interaction
+/// at all.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(tag = "mode", content = "output")]
+pub enum BarOutputMode {
+    #[default]
+    AllScreens,
+    SingleOutput(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum ModuleKind {
     Workspaces,
-    Clock { timezone: String },
+    Clock {
+        timezone: String,
+        // Per-instance, independent of the waybar-only global
+        // `Config::clock_12h` — a bar can carry multiple clock modules
+        // (e.g. local + UTC) that each want their own format.
+        #[serde(default = "default_true")]
+        hour12: bool,
+        #[serde(default = "default_true")]
+        show_timezone: bool,
+        #[serde(default = "default_true")]
+        show_date: bool,
+    },
     Cpu,
     Memory,
     Tray,
     Bluetooth,
     Network,
     Pulseaudio,
+    Notifications,
+    Clipboard,
     Launcher { icon: String, tooltip: String, command: String },
     Settings,
     Power,
 }
 
 impl ModuleKind {
-    /// Kinds with no per-instance fields — these are the ones the "Add
-    /// module" picker can add generically with a single click. Launcher
-    /// (needs icon/command) and Clock (meaningfully different per
-    /// timezone) aren't in this list; they still get added via the
-    /// existing seeded defaults / hand-edited config.
-    pub fn addable() -> &'static [ModuleKind] {
-        &[
+    /// Kinds the "Add module" picker can add with a single click, using a
+    /// sensible default for any per-instance fields (Clock: system-default
+    /// timezone, 12h, timezone shown — all editable after adding). Launcher
+    /// is the one exception: an icon/command placeholder isn't a
+    /// meaningful default, so it still only comes from hand-edited config.
+    pub fn addable() -> Vec<ModuleKind> {
+        vec![
             ModuleKind::Workspaces,
+            ModuleKind::Clock { timezone: String::new(), hour12: true, show_timezone: true, show_date: true },
             ModuleKind::Cpu,
             ModuleKind::Memory,
             ModuleKind::Tray,
             ModuleKind::Bluetooth,
             ModuleKind::Network,
             ModuleKind::Pulseaudio,
+            ModuleKind::Notifications,
+            ModuleKind::Clipboard,
             ModuleKind::Settings,
             ModuleKind::Power,
         ]
@@ -441,6 +577,13 @@ pub struct BarConfig {
     /// seeded with a sane default here, same as every other field.
     #[serde(default = "default_icon_rewrite")]
     pub icon_rewrite: Vec<IconRewriteRule>,
+    #[serde(default)]
+    pub output_mode: BarOutputMode,
+    /// Auto-hide to a thin edge strip, reappearing on hover — a bar
+    /// pinned to one output (SingleOutput) has no cross-output focus
+    /// concerns, so this is safe to combine with either output_mode.
+    #[serde(default)]
+    pub auto_hide: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -519,7 +662,7 @@ fn default_sections() -> Vec<BarSection> {
             modules: vec![
                 ModuleConfig { kind: ModuleKind::Cpu, enabled: true, size_override: None },
                 ModuleConfig { kind: ModuleKind::Memory, enabled: true, size_override: None },
-                ModuleConfig { kind: ModuleKind::Clock { timezone: String::new() }, enabled: true, size_override: None },
+                ModuleConfig { kind: ModuleKind::Clock { timezone: String::new(), hour12: true, show_timezone: true, show_date: true }, enabled: true, size_override: None },
             ],
         },
         BarSection {
@@ -583,6 +726,8 @@ impl Default for BarConfig {
             sections: default_sections(),
             next_section_id: default_next_section_id(),
             icon_rewrite: default_icon_rewrite(),
+            output_mode: BarOutputMode::default(),
+            auto_hide: false,
         }
     }
 }

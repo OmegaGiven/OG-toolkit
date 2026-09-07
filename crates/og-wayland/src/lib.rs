@@ -27,26 +27,37 @@ use std::path::PathBuf;
 use calloop::channel::{self, Sender};
 use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::data_device_manager::data_device::DataDevice;
 use smithay_client_toolkit::data_device_manager::data_source::DragSource;
 use smithay_client_toolkit::data_device_manager::WritePipe;
 use smithay_client_toolkit::data_device_manager::{data_device::DataDeviceHandler, DataDeviceManagerState};
 use smithay_client_toolkit::data_device_manager::data_offer::{DataOfferHandler, DragOffer};
 use smithay_client_toolkit::data_device_manager::data_source::DataSourceHandler;
+use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
+use smithay_client_toolkit::shm::{slot::SlotPool, Shm, ShmHandler};
 use smithay_client_toolkit::{
-    delegate_data_device, delegate_pointer, delegate_registry, delegate_seat, registry_handlers,
+    delegate_compositor, delegate_data_device, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_shm, registry_handlers,
 };
 use wayland_client::backend::Backend;
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_data_device_manager::DndAction, wl_pointer::WlPointer, wl_seat::WlSeat, wl_surface::WlSurface};
+use wayland_client::protocol::{
+    wl_data_device_manager::DndAction, wl_output, wl_pointer::WlPointer, wl_seat::WlSeat, wl_shm,
+    wl_surface::WlSurface,
+};
 use wayland_client::{Connection, Proxy, QueueHandle};
 
 pub struct DragRequest {
     pub paths: Vec<PathBuf>,
 }
+
+/// Fixed drag-icon canvas size — big enough to read as an icon, small
+/// enough to stay a cursor accessory rather than a window of its own.
+const ICON_SIZE: i32 = 56;
 
 /// Reads the real `wl_display*` behind a raw Wayland `wl_surface*` (as
 /// handed to us by `iced::window::run_with_handle`) via libwayland-client's
@@ -127,11 +138,25 @@ fn worker(connection: Connection, rx: channel::Channel<DragRequest>) {
         }
     };
 
+    // Both optional (unlike data_device_manager_state above) — they only
+    // back the drag *icon*. A bind failure here means drags still work,
+    // just without a cursor icon (today's behavior), rather than losing
+    // drag-and-drop entirely over what's a purely cosmetic addition.
+    let compositor = CompositorState::bind(&globals, &qh)
+        .inspect_err(|e| eprintln!("og-wayland: CompositorState::bind failed, drag icon disabled: {e:?}"))
+        .ok();
+    let shm = Shm::bind(&globals, &qh)
+        .inspect_err(|e| eprintln!("og-wayland: Shm::bind failed, drag icon disabled: {e:?}"))
+        .ok();
+
     let mut event_loop: EventLoop<State> = EventLoop::try_new().expect("calloop init");
     let mut state = State {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
+        output_state: OutputState::new(&globals, &qh),
         data_device_manager_state,
+        compositor,
+        shm,
         seat: None,
         pointer: None,
         data_device: None,
@@ -161,18 +186,49 @@ fn worker(connection: Connection, rx: channel::Channel<DragRequest>) {
 struct State {
     registry_state: RegistryState,
     seat_state: SeatState,
+    output_state: OutputState,
     data_device_manager_state: DataDeviceManagerState,
+    compositor: Option<CompositorState>,
+    shm: Option<Shm>,
     seat: Option<WlSeat>,
     pointer: Option<WlPointer>,
     data_device: Option<DataDevice>,
     latest_serial: u32,
     latest_surface: Option<WlSurface>,
     /// Kept alive for the duration of the drag — dropping a `DragSource`
-    /// cancels it. Also holds the URI-list bytes to hand back on `send`.
-    active_drag: Option<(DragSource, Vec<u8>)>,
+    /// cancels it. Also holds the URI-list bytes to hand back on `send`,
+    /// and (if compositor/shm bound OK) the icon surface + its backing
+    /// pool, which likewise must outlive the drag or the compositor loses
+    /// its buffer.
+    active_drag: Option<(DragSource, Vec<u8>, Option<(WlSurface, SlotPool)>)>,
 }
 
 impl State {
+    /// Builds a small drag-icon surface: one "page" rectangle for a single
+    /// file, three fanned-out ones for a multi-item drag — distinguishing
+    /// "one thing" from "a bunch of things" without needing to rasterize
+    /// any text/count badge. `None` on any bind/allocation failure (no
+    /// compositor/shm bound, or the compositor rejected the surface) —
+    /// callers fall back to dragging with no icon, same as before this
+    /// existed, rather than failing the whole drag over a cosmetic extra.
+    fn build_icon_surface(&mut self, qh: &QueueHandle<Self>, item_count: usize) -> Option<(WlSurface, SlotPool)> {
+        let compositor = self.compositor.as_ref()?;
+        let shm = self.shm.as_ref()?;
+
+        let surface = compositor.create_surface(qh);
+        let mut pool = SlotPool::new((ICON_SIZE * ICON_SIZE * 4) as usize, shm).ok()?;
+        let stride = ICON_SIZE * 4;
+        let (buffer, canvas) = pool.create_buffer(ICON_SIZE, ICON_SIZE, stride, wl_shm::Format::Argb8888).ok()?;
+
+        draw_drag_icon(canvas, item_count);
+
+        buffer.attach_to(&surface).ok()?;
+        surface.damage_buffer(0, 0, ICON_SIZE, ICON_SIZE);
+        surface.commit();
+
+        Some((surface, pool))
+    }
+
     fn start_drag(&mut self, qh: &QueueHandle<Self>, paths: Vec<PathBuf>) {
         let Some(surface) = self.latest_surface.clone() else { return };
         let Some(seat) = self.seat.clone() else { return };
@@ -180,7 +236,6 @@ impl State {
         if self.data_device.is_none() {
             self.data_device = Some(self.data_device_manager_state.get_data_device(qh, &seat));
         }
-        let Some(device) = &self.data_device else { return };
 
         let uri_list = paths
             .iter()
@@ -189,13 +244,74 @@ impl State {
             .collect::<Vec<_>>()
             .join("\r\n");
 
+        // Built before borrowing `data_device` below — needs `&mut self`,
+        // which can't coexist with the immutable borrow `device` holds.
+        let icon = self.build_icon_surface(qh, paths.len());
+        let icon_surface_ref = icon.as_ref().map(|(s, _)| s);
+
+        let Some(device) = &self.data_device else { return };
         let source = self.data_device_manager_state.create_drag_and_drop_source(
             qh,
             ["text/uri-list"],
             DndAction::Copy,
         );
-        source.start_drag(device, &surface, None, self.latest_serial);
-        self.active_drag = Some((source, uri_list.into_bytes()));
+        source.start_drag(device, &surface, icon_surface_ref, self.latest_serial);
+        self.active_drag = Some((source, uri_list.into_bytes(), icon));
+    }
+}
+
+/// Draws into a tightly-packed BGRA8888-little-endian / ARGB8888
+/// premultiplied canvas (`width*height*4` bytes) — same convention as
+/// og-notify's `effect::render` (see that crate for the reasoning on byte
+/// order). A plain opaque rectangle with a darker 2px border reads clearly
+/// as "a page" at this size without needing any text/font rendering.
+fn draw_drag_icon(canvas: &mut [u8], item_count: usize) {
+    canvas.fill(0);
+
+    // Furthest-back layer drawn first so nearer ones overlap it, same as
+    // a real fanned-out stack of pages.
+    let layers: i32 = if item_count > 1 { 3 } else { 1 };
+    let (base_x0, base_y0, base_x1, base_y1) = (8, 6, ICON_SIZE - 14, ICON_SIZE - 16);
+    for i in 0..layers {
+        let offset = (layers - 1 - i) * 6;
+        let x0 = (base_x0 + offset).clamp(0, ICON_SIZE - 1);
+        let y0 = (base_y0 + offset).clamp(0, ICON_SIZE - 1);
+        let x1 = (base_x1 + offset).clamp(0, ICON_SIZE - 1);
+        let y1 = (base_y1 + offset).clamp(0, ICON_SIZE - 1);
+        fill_rect(canvas, ICON_SIZE, x0, y0, x1, y1, (245, 245, 245), 235);
+        stroke_rect(canvas, ICON_SIZE, x0, y0, x1, y1, (90, 90, 90), 255);
+    }
+}
+
+fn put_pixel(canvas: &mut [u8], width: i32, x: i32, y: i32, rgb: (u8, u8, u8), alpha: u8) {
+    if x < 0 || y < 0 || x >= width || alpha == 0 {
+        return;
+    }
+    let idx = (y as usize * width as usize + x as usize) * 4;
+    let Some(px) = canvas.get_mut(idx..idx + 4) else { return };
+    let a = alpha as u32;
+    px[0] = ((rgb.2 as u32 * a) / 255) as u8;
+    px[1] = ((rgb.1 as u32 * a) / 255) as u8;
+    px[2] = ((rgb.0 as u32 * a) / 255) as u8;
+    px[3] = alpha;
+}
+
+fn fill_rect(canvas: &mut [u8], width: i32, x0: i32, y0: i32, x1: i32, y1: i32, rgb: (u8, u8, u8), alpha: u8) {
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            put_pixel(canvas, width, x, y, rgb, alpha);
+        }
+    }
+}
+
+fn stroke_rect(canvas: &mut [u8], width: i32, x0: i32, y0: i32, x1: i32, y1: i32, rgb: (u8, u8, u8), alpha: u8) {
+    for x in x0..=x1 {
+        put_pixel(canvas, width, x, y0, rgb, alpha);
+        put_pixel(canvas, width, x, y1, rgb, alpha);
+    }
+    for y in y0..=y1 {
+        put_pixel(canvas, width, x0, y, rgb, alpha);
+        put_pixel(canvas, width, x1, y, rgb, alpha);
     }
 }
 
@@ -247,7 +363,7 @@ impl DataSourceHandler for State {
         if mime != "text/uri-list" {
             return;
         }
-        let Some((_, content)) = &self.active_drag else { return };
+        let Some((_, content, _)) = &self.active_drag else { return };
         use std::io::Write;
         let mut pipe = write_pipe;
         let _ = pipe.write_all(content);
@@ -285,10 +401,42 @@ impl ProvidesRegistryState for State {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }
-    registry_handlers![SeatState];
+    registry_handlers![SeatState, OutputState];
+}
+
+// Never needs to actually do anything with an output (the icon surface
+// isn't tied to one) — `delegate_compositor!`'s generated dispatch just
+// requires `OutputHandler` to exist.
+impl OutputHandler for State {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.output_state
+    }
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+}
+
+// Icon surfaces are plain `wl_surface`s committed once and never
+// reconfigured (no xdg-shell/layer-shell role), so every compositor
+// callback here is a no-op — there's nothing to react to.
+impl CompositorHandler for State {
+    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: i32) {}
+    fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: wl_output::Transform) {}
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: u32) {}
+    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: &wl_output::WlOutput) {}
+}
+
+impl ShmHandler for State {
+    fn shm_state(&mut self) -> &mut Shm {
+        self.shm.as_mut().expect("ShmHandler called without a bound Shm")
+    }
 }
 
 delegate_seat!(State);
 delegate_pointer!(State);
 delegate_data_device!(State);
 delegate_registry!(State);
+delegate_compositor!(State);
+delegate_output!(State);
+delegate_shm!(State);

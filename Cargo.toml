@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/og-config",
+    "crates/og-drag",
     "crates/og-theme",
     "crates/og-wayland",
+    "crates/og-wallpaper-core",
 ]
