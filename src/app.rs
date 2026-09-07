@@ -342,7 +342,31 @@ impl App {
             let body: Element<Message> = if rows.is_empty() {
                 text(empty_hint).size(12).style(move |_| text::Style { color: Some(dim) }).into()
             } else {
-                scrollable(column(rows).spacing(2)).height(Length::Fill).into()
+                // Thin accent-colored line with a round "bead" scroller riding
+                // it, instead of iced's default thick gray bar.
+                scrollable(column(rows).spacing(2))
+                    .height(Length::Fill)
+                    .direction(scrollable::Direction::Vertical(
+                        scrollable::Scrollbar::new().width(4.0).scroller_width(8.0).margin(2.0),
+                    ))
+                    .style(move |_theme, _status| scrollable::Style {
+                        container: container::Style::default(),
+                        vertical_rail: scrollable::Rail {
+                            background: Some(Background::Color(Color { a: 0.15, ..accent })),
+                            border: Border { radius: 2.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                            scroller: scrollable::Scroller {
+                                color: accent,
+                                border: Border { radius: 4.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                            },
+                        },
+                        horizontal_rail: scrollable::Rail {
+                            background: None,
+                            border: Border::default(),
+                            scroller: scrollable::Scroller { color: Color::TRANSPARENT, border: Border::default() },
+                        },
+                        gap: None,
+                    })
+                    .into()
             };
             container(column![header, body].spacing(8).padding(10))
                 .width(Length::FillPortion(1))

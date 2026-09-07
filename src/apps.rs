@@ -13,6 +13,11 @@ pub fn load_app_registry() -> Vec<AppEntry> {
     let dirs = vec![
         PathBuf::from("/usr/share/applications"),
         PathBuf::from(format!("{home}/.local/share/applications")),
+        // Flatpak's own exports dirs — not under either path above, so
+        // flatpak-installed apps (system or --user) were invisible here
+        // even though they show up fine in every other launcher.
+        PathBuf::from("/var/lib/flatpak/exports/share/applications"),
+        PathBuf::from(format!("{home}/.local/share/flatpak/exports/share/applications")),
     ];
 
     let mut entries = Vec::new();
@@ -72,10 +77,14 @@ fn parse_desktop_file(path: &Path) -> Option<AppEntry> {
     }
 
     // Strip desktop-file field codes (%f, %F, %u, %U, %i, %c, %k) — we're
-    // launching with no file/icon/etc context to substitute in.
+    // launching with no file/icon/etc context to substitute in. Also
+    // strips flatpak's own `@@u ... @@` optional-file-args bracketing
+    // (e.g. Bambu Studio's `Exec=... @@u %U @@`) — without this, removing
+    // just the %U left bare `@@u @@` tokens behind for flatpak's arg
+    // parser to choke on.
     let cleaned = exec
         .split_whitespace()
-        .filter(|w| !(w.starts_with('%') && w.len() == 2))
+        .filter(|w| !(w.starts_with('%') && w.len() == 2) && *w != "@@" && !w.starts_with("@@"))
         .collect::<Vec<_>>()
         .join(" ");
 
