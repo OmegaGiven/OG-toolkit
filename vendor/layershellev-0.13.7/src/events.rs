@@ -169,6 +169,10 @@ pub struct AxisScroll {
 #[derive(Debug, Clone)]
 pub(crate) enum DispatchMessageInner {
     NewDisplay(WlOutput),
+    /// The compositor sent `zwlr_layer_surface_v1.closed` for this unit
+    /// (its output went away, typically). The unit is torn down before the
+    /// message is forwarded.
+    Closed,
     MouseButton {
         state: WEnum<ButtonState>,
         serial: u32,
@@ -337,6 +341,11 @@ pub enum DispatchMessage {
     },
     /// this will request to do refresh the whole screen, because the layershell tell that a new
     /// configure happened
+    /// The compositor closed this layer surface (e.g. its output was
+    /// unplugged or re-enumerated after DPMS). The wl_surface has already
+    /// been destroyed; the app must drop its window and never render to it
+    /// again — presenting to a closed surface blocks forever.
+    Closed,
     RequestRefresh {
         width: u32,
         height: u32,
@@ -354,6 +363,7 @@ impl From<DispatchMessageInner> for DispatchMessage {
     fn from(val: DispatchMessageInner) -> Self {
         match val {
             DispatchMessageInner::NewDisplay(_) => unimplemented!(),
+            DispatchMessageInner::Closed => DispatchMessage::Closed,
             DispatchMessageInner::MouseButton {
                 state,
                 serial,

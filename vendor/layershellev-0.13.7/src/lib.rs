@@ -296,6 +296,11 @@ impl ZxdgOutputInfo {
         }
     }
 
+    /// the compositor's name for this output (e.g. "DP-3", "HDMI-A-1")
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
     /// you can get the Logic position of the screen current surface in
     pub fn get_position(&self) -> (i32, i32) {
         self.position
@@ -1638,6 +1643,18 @@ impl<T> Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for WindowState<
                 Some(state.units[unit_index].id),
                 DispatchMessageInner::RefreshSurface { width, height },
             ));
+        } else if let zwlr_layer_surface_v1::Event::Closed = event {
+            // Stock layershellev ignores `closed`, leaving the unit (and
+            // iced's window for it) alive. The next present to that
+            // surface then blocks forever in the Vulkan WSI, hanging the
+            // whole event loop — every other surface freezes too.
+            let Some(unit_index) = state.units.iter().position(|unit| unit.shell == *surface)
+            else {
+                return;
+            };
+            state
+                .message
+                .push((Some(state.units[unit_index].id), DispatchMessageInner::Closed));
         }
     }
 }
@@ -2173,6 +2190,21 @@ impl<T: 'static> WindowState<T> {
                             LayerEvent::XdgInfoChanged(*change_type),
                             &mut self,
                             *index_info,
+                        );
+                    }
+                    (Some(unit_id), DispatchMessageInner::Closed) => {
+                        if let Some(index) = self.units.iter().position(|unit| unit.id == *unit_id) {
+                            let unit = self.units.remove(index);
+                            unit.shell.destroy();
+                            unit.wl_surface.destroy();
+                            if let Some(buffer) = unit.buffer.as_ref() {
+                                buffer.destroy();
+                            }
+                        }
+                        event_handler(
+                            LayerEvent::RequestMessages(&DispatchMessage::Closed),
+                            &mut self,
+                            Some(*unit_id),
                         );
                     }
                     (_, DispatchMessageInner::NewDisplay(output_display)) => {
