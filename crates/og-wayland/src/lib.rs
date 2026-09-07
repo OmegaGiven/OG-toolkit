@@ -55,6 +55,18 @@ pub struct DragRequest {
     pub paths: Vec<PathBuf>,
 }
 
+/// Something being dragged *into* our window from another client (a
+/// browser, Dolphin, another og-files window...). Coordinates are
+/// surface-local logical pixels, same space as iced's cursor position.
+#[derive(Debug, Clone)]
+pub enum DropEvent {
+    Enter { x: f64, y: f64 },
+    Motion { x: f64, y: f64 },
+    Leave,
+    /// The drop happened and the `text/uri-list` payload was read.
+    Dropped { paths: Vec<PathBuf>, x: f64, y: f64 },
+}
+
 /// Fixed drag-icon canvas size — big enough to read as an icon, small
 /// enough to stay a cursor accessory rather than a window of its own.
 const ICON_SIZE: i32 = 56;
@@ -105,7 +117,15 @@ pub fn display_ptr_from_window_handle(handle: iced::window::raw_window_handle::W
 /// cross the thread boundary — the pointer itself is reconstructed, and
 /// wrapped in a `Connection`, inside the new thread).
 pub fn spawn(display_ptr: usize) -> Sender<DragRequest> {
+    spawn_with_drops(display_ptr).0
+}
+
+/// Like `spawn`, but also reports drags coming *into* the window on the
+/// returned receiver. winit has no Wayland drop-target support at all, so
+/// this is the only way an iced window learns about a drop.
+pub fn spawn_with_drops(display_ptr: usize) -> (Sender<DragRequest>, std::sync::mpsc::Receiver<DropEvent>) {
     let (tx, rx) = channel::channel();
+    let (drop_tx, drop_rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("og-wayland-drag".into())
         .spawn(move || {
@@ -114,13 +134,13 @@ pub fn spawn(display_ptr: usize) -> Sender<DragRequest> {
             // connection stays alive for the process's whole lifetime.
             let backend = unsafe { Backend::from_foreign_display(display_ptr as *mut _) };
             let connection = Connection::from_backend(backend);
-            worker(connection, rx);
+            worker(connection, rx, drop_tx);
         })
         .expect("spawn og-wayland-drag thread");
-    tx
+    (tx, drop_rx)
 }
 
-fn worker(connection: Connection, rx: channel::Channel<DragRequest>) {
+fn worker(connection: Connection, rx: channel::Channel<DragRequest>, drop_tx: std::sync::mpsc::Sender<DropEvent>) {
     let (globals, event_queue) = match registry_queue_init::<State>(&connection) {
         Ok(v) => v,
         Err(e) => {
@@ -163,6 +183,9 @@ fn worker(connection: Connection, rx: channel::Channel<DragRequest>) {
         latest_serial: 0,
         latest_surface: None,
         active_drag: None,
+        drop_tx,
+        drop_pos: (0.0, 0.0),
+        incoming_offer: None,
     };
 
     WaylandSource::new(connection, event_queue).insert(event_loop.handle()).expect("insert wayland source");
@@ -195,6 +218,11 @@ struct State {
     data_device: Option<DataDevice>,
     latest_serial: u32,
     latest_surface: Option<WlSurface>,
+    drop_tx: std::sync::mpsc::Sender<DropEvent>,
+    /// Last surface-local position of an incoming drag.
+    drop_pos: (f64, f64),
+    /// The offer currently hovering us, if it carries a URI list.
+    incoming_offer: Option<DragOffer>,
     /// Kept alive for the duration of the drag — dropping a `DragSource`
     /// cancels it. Also holds the URI-list bytes to hand back on `send`,
     /// and (if compositor/shm bound OK) the icon surface + its backing
@@ -384,11 +412,106 @@ impl DataSourceHandler for State {
     fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _source: &wayland_client::protocol::wl_data_source::WlDataSource, _action: DndAction) {}
 }
 
+const URI_LIST: &str = "text/uri-list";
+
+/// `file:///home/me/a%20b.txt` lines → paths. Skips comments and non-file
+/// URIs (a browser dragging a link gives `https://...`, not a file).
+pub fn parse_uri_list(data: &str) -> Vec<PathBuf> {
+    data.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let rest = l.strip_prefix("file://")?;
+            // Strip an optional host part ("file://localhost/x").
+            let path = if rest.starts_with('/') { rest } else { rest.find('/').map(|i| &rest[i..])? };
+            Some(PathBuf::from(percent_decode(path)))
+        })
+        .collect()
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() + 0 && i + 2 <= bytes.len() - 1 {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+impl State {
+    fn current_offer(&self) -> Option<DragOffer> {
+        self.data_device.as_ref().and_then(|d| d.data().drag_offer())
+    }
+}
+
 impl DataDeviceHandler for State {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice, _x: f64, _y: f64, _surface: &WlSurface) {}
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice) {}
-    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice, _x: f64, _y: f64) {}
-    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice) {}
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice, x: f64, y: f64, _surface: &WlSurface) {
+        // Ignore our own outgoing drag re-entering the window — the app
+        // handles in-window drops itself via plain mouse events.
+        if self.active_drag.is_some() {
+            return;
+        }
+        let Some(offer) = self.current_offer() else { return };
+        let has_uris = offer.with_mime_types(|m| m.iter().any(|t| t == URI_LIST));
+        if !has_uris {
+            self.incoming_offer = None;
+            return;
+        }
+        offer.accept_mime_type(offer.serial, Some(URI_LIST.to_string()));
+        offer.set_actions(DndAction::Copy | DndAction::Move, DndAction::Copy);
+        self.incoming_offer = Some(offer);
+        self.drop_pos = (x, y);
+        let _ = self.drop_tx.send(DropEvent::Enter { x, y });
+    }
+
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice) {
+        if self.incoming_offer.take().is_some() {
+            let _ = self.drop_tx.send(DropEvent::Leave);
+        }
+    }
+
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice, x: f64, y: f64) {
+        if self.incoming_offer.is_some() {
+            self.drop_pos = (x, y);
+            let _ = self.drop_tx.send(DropEvent::Motion { x, y });
+        }
+    }
+
+    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice) {
+        let Some(offer) = self.incoming_offer.take() else { return };
+        let (x, y) = self.drop_pos;
+        match offer.receive(URI_LIST.to_string()) {
+            Ok(pipe) => {
+                // The source writes once we've returned to the event loop
+                // (it needs to see our request first), so read on a side
+                // thread rather than blocking dispatch here.
+                let tx = self.drop_tx.clone();
+                std::thread::spawn(move || {
+                    use std::io::Read;
+                    let mut pipe = pipe;
+                    let mut buf = Vec::new();
+                    let _ = pipe.read_to_end(&mut buf);
+                    let paths = parse_uri_list(&String::from_utf8_lossy(&buf));
+                    let _ = tx.send(DropEvent::Dropped { paths, x, y });
+                });
+                offer.finish();
+            }
+            Err(e) => {
+                eprintln!("og-wayland: receive on drop failed: {e:?}");
+                let _ = self.drop_tx.send(DropEvent::Leave);
+            }
+        }
+    }
+
     fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _device: &wayland_client::protocol::wl_data_device::WlDataDevice) {}
 }
 

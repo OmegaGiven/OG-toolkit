@@ -200,6 +200,63 @@ pub fn trash_dir() -> PathBuf {
     home_dir().join(".local/share/Trash")
 }
 
+/// Moves one file/folder to `~/.local/share/Trash`, writing its `.trashinfo`
+/// sidecar (freedesktop trash spec) and returning the trashed path. Used by
+/// `jobs::Worker` — one call per item, so cancel/progress stay granular
+/// instead of the old all-or-partial `move_to_trash` batch.
+pub fn trash_one(path: &Path) -> Result<PathBuf, String> {
+    let files_dir = trash_dir().join("files");
+    let info_dir = trash_dir().join("info");
+    std::fs::create_dir_all(&files_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&info_dir).map_err(|e| e.to_string())?;
+
+    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let mut dst = files_dir.join(&name);
+    let mut info_name = format!("{name}.trashinfo");
+    // Two different files both named "notes.txt" from different folders
+    // must not collide in the flat trash — same "(2)" scheme as elsewhere.
+    let mut n = 2;
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| name.clone());
+    let ext = path.extension().map(|e| e.to_string_lossy().to_string());
+    while dst.exists() {
+        let candidate_name = match &ext {
+            Some(ext) if path.is_file() => format!("{stem} ({n}).{ext}"),
+            _ => format!("{name} ({n})"),
+        };
+        dst = files_dir.join(&candidate_name);
+        info_name = format!("{candidate_name}.trashinfo");
+        n += 1;
+    }
+
+    std::fs::rename(path, &dst).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S");
+    let content = format!("[Trash Info]\nPath={}\nDeletionDate={}\n", path.display(), now);
+    let _ = std::fs::write(info_dir.join(&info_name), content);
+    Ok(dst)
+}
+
+/// Reads the `.trashinfo` sidecar for a trashed path to find where it came
+/// from originally.
+pub fn trash_origin(trashed_path: &Path) -> Option<PathBuf> {
+    let name = trashed_path.file_name()?.to_string_lossy().to_string();
+    let info_path = trash_dir().join("info").join(format!("{}.trashinfo", name));
+    let info = std::fs::read_to_string(&info_path).ok()?;
+    let original = info.lines().find_map(|l| l.strip_prefix("Path="))?;
+    Some(PathBuf::from(original))
+}
+
+/// Moves a trashed item back to `dest` and removes its `.trashinfo`.
+pub fn restore_to(trashed_path: &Path, dest: &Path) -> Result<(), String> {
+    let name = trashed_path.file_name().ok_or("invalid trash entry")?.to_string_lossy().to_string();
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(trashed_path, dest).map_err(|e| e.to_string())?;
+    let info_path = trash_dir().join("info").join(format!("{}.trashinfo", name));
+    let _ = std::fs::remove_file(info_path);
+    Ok(())
+}
+
 pub fn move_to_trash(paths: &[PathBuf]) -> Result<(), String> {
     let files_dir = trash_dir().join("files");
     let info_dir = trash_dir().join("info");

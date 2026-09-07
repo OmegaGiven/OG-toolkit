@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release
 
-bin="target/release/og-files"
+bin="../../target/release/og-files"
 dest="$HOME/.local/bin/og-files"
 tmp="${dest}.new"
 
