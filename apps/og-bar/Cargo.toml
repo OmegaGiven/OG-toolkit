@@ -1,0 +1,42 @@
+[package]
+name = "og-bar"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "og-bar"
+path = "src/main.rs"
+
+[[bin]]
+name = "tray-spike"
+path = "src/bin/tray_spike.rs"
+
+[dependencies]
+system-tray = "0.8"
+og-config = { path = "../OG-toolkit/crates/og-config" }
+og-drag = { path = "../OG-toolkit/crates/og-drag" }
+og-theme = { path = "../OG-toolkit/crates/og-theme" }
+iced = { version = "0.13", default-features = false, features = ["tiny-skia", "advanced", "tokio", "image"] }
+iced_layershell = "0.13.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "rt"] }
+futures = "0.3"
+chrono = "0.4"
+chrono-tz = "0.10"
+libc = "0.2"
+
+# layershellev never calls set_gravity/set_constraint_adjustment when
+# creating a popup's xdg_positioner, so popups near a screen edge render
+# partly off-screen with zero compositor-side correction — see
+# OG-toolkit/vendor/layershellev-0.13.7/src/lib.rs for the exact patch. Two lines
+# added to an otherwise-unmodified 0.13.7, not a fork of anything else.
+#
+# iced_layershell silently drops LayerEvent::XdgInfoChanged (the wl_output
+# name arriving via zxdg_output) instead of forwarding it, so an app has no
+# way to learn which output one of its AllScreens surfaces landed on — see
+# OG-toolkit/vendor/iced_layershell-0.13.7/src/multi_window.rs for the patch that
+# stashes it in a small process-global side table (output_registry.rs).
+[patch.crates-io]
+layershellev = { path = "../OG-toolkit/vendor/layershellev-0.13.7" }
+iced_layershell = { path = "../OG-toolkit/vendor/iced_layershell-0.13.7" }

@@ -1,0 +1,11 @@
+pub mod bluetooth;
+pub mod clipboard;
+pub mod clock;
+pub mod cpu;
+pub mod launcher;
+pub mod memory;
+pub mod network;
+pub mod notifications;
+pub mod pulseaudio;
+pub mod tray;
+pub mod workspaces;
