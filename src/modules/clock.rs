@@ -23,11 +23,13 @@ pub struct Clock {
     /// local time rather than showing garbage.
     timezone: String,
     hour12: bool,
+    show_timezone: bool,
+    show_date: bool,
 }
 
 impl Clock {
-    pub fn new(timezone: String, hour12: bool) -> Self {
-        Self { timezone, hour12 }
+    pub fn new(timezone: String, hour12: bool, show_timezone: bool, show_date: bool) -> Self {
+        Self { timezone, hour12, show_timezone, show_date }
     }
 
     /// date / time / AM-PM / tz abbreviation, as separate segments — AM/PM
@@ -83,17 +85,21 @@ impl Module for Clock {
         let content: Element<'_, Message> = match orientation {
             // Top/bottom bar: room for one line, natural reading order.
             Orientation::Horizontal => {
-                let mut parts = vec![widget(seg.date), widget(seg.time)];
+                let mut parts = Vec::new();
+                if self.show_date { parts.push(widget(seg.date)); }
+                parts.push(widget(seg.time));
                 if let Some(ampm) = seg.ampm { parts.push(widget(ampm)); }
-                parts.push(widget(seg.tz));
+                if self.show_timezone { parts.push(widget(seg.tz)); }
                 row(parts).spacing(6).align_y(iced::Alignment::Center).into()
             }
             // Left/right bar: date on top, time (always intact, never
             // sharing a line with AM/PM), AM/PM, timezone at the bottom.
             Orientation::Vertical => {
-                let mut parts = vec![widget(seg.date), widget(seg.time)];
+                let mut parts = Vec::new();
+                if self.show_date { parts.push(widget(seg.date)); }
+                parts.push(widget(seg.time));
                 if let Some(ampm) = seg.ampm { parts.push(widget(ampm)); }
-                parts.push(widget(seg.tz));
+                if self.show_timezone { parts.push(widget(seg.tz)); }
                 column(parts).align_x(iced::Alignment::Center).into()
             }
         };

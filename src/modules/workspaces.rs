@@ -99,29 +99,77 @@ fn collect_windows(tree: &serde_json::Value, rules: &[IconRewriteRule]) -> std::
     out
 }
 
-async fn fetch_workspaces(rules: &[IconRewriteRule]) -> Vec<WorkspaceInfo> {
+/// Walks the same `get_tree` output collecting the name of every output
+/// (e.g. "DP-3") that has a fullscreen window anywhere under it.
+fn collect_fullscreen_outputs(tree: &serde_json::Value) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+
+    fn walk(node: &serde_json::Value, current_output: Option<&str>, out: &mut std::collections::HashSet<String>) {
+        let output_name = if node.get("type").and_then(|v| v.as_str()) == Some("output") {
+            node.get("name").and_then(|v| v.as_str())
+        } else {
+            current_output
+        };
+
+        // Workspace/output container nodes report fullscreen_mode: 1
+        // unconditionally (sway quirk, not a real signal) — only an
+        // actual window (has app_id or a window_properties.class) being
+        // fullscreen counts.
+        let is_window = node.get("app_id").and_then(|v| v.as_str()).is_some()
+            || node.get("window_properties").and_then(|wp| wp.get("class")).and_then(|v| v.as_str()).is_some();
+        if let Some(name) = output_name {
+            // `visible` (window nodes only) is true only when the window is
+            // actually on-screen right now — without it a fullscreen window
+            // left on a background workspace keeps its output flagged and
+            // the bar stays collapsed to 1x1 there until it's unfullscreened.
+            // Absent on older sway -> unwrap_or(false) just disables the
+            // fullscreen auto-hide rather than wedging the bar.
+            let visible = node.get("visible").and_then(|v| v.as_bool()).unwrap_or(false);
+            let fullscreen = is_window
+                && visible
+                && node.get("fullscreen_mode").and_then(|v| v.as_i64()).unwrap_or(0) != 0;
+            if fullscreen {
+                out.insert(name.to_string());
+            }
+        }
+
+        for key in ["nodes", "floating_nodes"] {
+            if let Some(children) = node.get(key).and_then(|v| v.as_array()) {
+                for child in children {
+                    walk(child, output_name, out);
+                }
+            }
+        }
+    }
+
+    walk(tree, None, &mut out);
+    out
+}
+
+async fn fetch_workspaces(
+    rules: &[IconRewriteRule],
+) -> (Vec<WorkspaceInfo>, std::collections::HashSet<String>) {
     let workspaces_out = Command::new("swaymsg").args(["-t", "get_workspaces"]).output().await;
     let raw: Vec<RawWorkspace> = match workspaces_out {
         Ok(out) => serde_json::from_slice(&out.stdout).unwrap_or_default(),
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), std::collections::HashSet::new()),
     };
 
     let tree_out = Command::new("swaymsg").args(["-t", "get_tree"]).output().await;
-    let windows_by_ws = match tree_out {
-        Ok(out) => serde_json::from_slice::<serde_json::Value>(&out.stdout)
-            .map(|tree| collect_windows(&tree, rules))
-            .unwrap_or_default(),
-        Err(_) => std::collections::HashMap::new(),
-    };
+    let tree = tree_out.ok().and_then(|out| serde_json::from_slice::<serde_json::Value>(&out.stdout).ok());
+    let windows_by_ws = tree.as_ref().map(|t| collect_windows(t, rules)).unwrap_or_default();
+    let fullscreen_outputs = tree.as_ref().map(collect_fullscreen_outputs).unwrap_or_default();
 
-    raw.into_iter()
+    let workspaces = raw
+        .into_iter()
         .map(|w| WorkspaceInfo {
             windows: windows_by_ws.get(&w.name).cloned().unwrap_or_default(),
             num: w.num,
             name: w.name,
             focused: w.focused,
         })
-        .collect()
+        .collect();
+    (workspaces, fullscreen_outputs)
 }
 
 pub struct Workspaces {
@@ -204,7 +252,7 @@ impl Module for Workspaces {
                     // plain click is just a press+release with no group
                     // hover change in between, so this is transparent to
                     // ordinary clicking.
-                    .on_press(Message::WindowDragStart(con_id, ws_num))
+                    .on_press(Message::WindowDragStart(con_id, ws_num, w.icon.clone()))
                     .on_right_press(Message::OpenWindowMenu(con_id, ws_num))
                     .into()
                 });
@@ -265,7 +313,9 @@ fn workspace_stream(rules: Vec<IconRewriteRule>) -> impl iced::futures::Stream<I
     iced::stream::channel(16, |mut sender| async move {
         use iced::futures::SinkExt;
 
-        let _ = sender.send(Message::WorkspacesUpdated(fetch_workspaces(&rules).await)).await;
+        let (workspaces, fullscreen_outputs) = fetch_workspaces(&rules).await;
+        let _ = sender.send(Message::WorkspacesUpdated(workspaces)).await;
+        let _ = sender.send(Message::FullscreenOutputsUpdated(fullscreen_outputs)).await;
 
         // kill_on_drop only covers a graceful stream teardown; if og-bar
         // itself is killed (SIGTERM/SIGKILL) the drop glue never runs, so
@@ -294,7 +344,9 @@ fn workspace_stream(rules: Vec<IconRewriteRule>) -> impl iced::futures::Stream<I
         let mut lines = BufReader::new(stdout).lines();
 
         while let Ok(Some(_line)) = lines.next_line().await {
-            let _ = sender.send(Message::WorkspacesUpdated(fetch_workspaces(&rules).await)).await;
+            let (workspaces, fullscreen_outputs) = fetch_workspaces(&rules).await;
+            let _ = sender.send(Message::WorkspacesUpdated(workspaces)).await;
+            let _ = sender.send(Message::FullscreenOutputsUpdated(fullscreen_outputs)).await;
         }
     })
 }

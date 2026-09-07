@@ -4,13 +4,23 @@
 //! SSID lookup (`iw dev <if> link`) is the one place this still shells out,
 //! since sysfs has no ESSID attribute.
 
-use iced::widget::{button, container, text};
+use iced::widget::{container, mouse_area, text};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 
 use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
+
+pub fn is_wifi_powered() -> bool {
+    let out = std::process::Command::new("rfkill")
+        .args(["list", "wifi"])
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .unwrap_or_default();
+    !out.contains("Soft blocked: yes") && !out.is_empty()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum LinkState {
@@ -61,41 +71,42 @@ fn detect_link() -> LinkState {
 
 pub struct Network {
     state: LinkState,
+    hovered: bool,
 }
 
 impl Network {
     pub fn new() -> Self {
-        Self { state: detect_link() }
+        Self { state: detect_link(), hovered: false }
     }
 }
 
 impl Module for Network {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
+        let hovered = self.hovered;
         let icon = match &self.state {
             LinkState::Wifi(_) => "\u{f05a9}",
             LinkState::Ethernet => "\u{f0200}",
             LinkState::Disconnected => "\u{f05aa}",
         };
-        button(
-            container(text(icon).size(16).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }))
-                .width(size as u16)
-                .height(size as u16)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill),
+        mouse_area(
+            container(
+                container(text(icon).size(16).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }))
+                    .width(size as u16)
+                    .height(size as u16)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .style(move |_| container::Style {
+                background: Some(Background::Color(if hovered { colors.header_btn_bg } else { Color::TRANSPARENT })),
+                border: Border { radius: colors.radius.into(), ..Default::default() },
+                ..Default::default()
+            }),
         )
-        .padding(0)
-        .style(move |_, status| button::Style {
-            background: Some(Background::Color(if matches!(status, button::Status::Hovered) {
-                colors.header_btn_bg
-            } else {
-                Color::TRANSPARENT
-            })),
-            border: Border { radius: colors.radius.into(), ..Default::default() },
-            text_color: fg,
-            ..Default::default()
-        })
-        .on_press(Message::Launch("~/.local/bin/og-settings --tab network".to_string()))
+        .on_press(Message::Launch("og-settings --tab network".to_string()))
+        .on_right_press(Message::WifiTogglePower)
+        .on_enter(Message::NetworkHover(true))
+        .on_exit(Message::NetworkHover(false))
         .into()
     }
 
@@ -104,8 +115,11 @@ impl Module for Network {
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick = message {
+        if let Message::Tick | Message::WifiTogglePower = message {
             self.state = detect_link();
+        }
+        if let Message::NetworkHover(v) = message {
+            self.hovered = *v;
         }
     }
 }

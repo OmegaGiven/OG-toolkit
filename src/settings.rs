@@ -16,11 +16,25 @@ use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
 
-pub struct SettingsButton;
+#[derive(Default)]
+pub struct SettingsButton {
+    // button::Style's hover styling comes for free from its Status
+    // callback, but this needs both left- and right-click (button only
+    // gives on_press), so it's built on mouse_area instead — which has no
+    // such Status, hence tracking hover state by hand via on_enter/on_exit.
+    hovered: bool,
+}
+
+impl SettingsButton {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 impl Module for SettingsButton {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
         let fg = colors.text;
+        let bg = if self.hovered { colors.header_btn_bg } else { Color::TRANSPARENT };
         // Left click: the full og-settings Bar tab (same plain-launch
         // pattern the network/bluetooth buttons already use via
         // Message::Launch — not adding a focus-or-launch shell fallback
@@ -37,14 +51,22 @@ impl Module for SettingsButton {
                     .center_y(Length::Fill),
             )
             .style(move |_| container::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),
+                background: Some(Background::Color(bg)),
                 border: Border { radius: colors.radius.into(), ..Default::default() },
                 ..Default::default()
             }),
         )
-        .on_press(Message::Launch("~/.local/bin/og-settings --tab bar".to_string()))
+        .on_press(Message::Launch("og-settings --tab bar".to_string()))
         .on_right_press(Message::OpenSettingsPopup)
+        .on_enter(Message::SettingsButtonHover(true))
+        .on_exit(Message::SettingsButtonHover(false))
         .into()
+    }
+
+    fn update(&mut self, message: &Message) {
+        if let Message::SettingsButtonHover(v) = message {
+            self.hovered = *v;
+        }
     }
 }
 
@@ -58,6 +80,8 @@ fn kind_label(kind: &ModuleKind) -> String {
         ModuleKind::Bluetooth => "Bluetooth".to_string(),
         ModuleKind::Network => "Network".to_string(),
         ModuleKind::Pulseaudio => "Volume".to_string(),
+        ModuleKind::Notifications => "Notifications".to_string(),
+        ModuleKind::Clipboard => "Clipboard".to_string(),
         ModuleKind::Launcher { tooltip, .. } => tooltip.clone(),
         ModuleKind::Settings => "Settings".to_string(),
         ModuleKind::Power => "Power".to_string(),
@@ -114,7 +138,7 @@ fn align_button(colors: AppColors, label: &'static str, align: SectionAlign, cur
 fn module_toggle_row(colors: AppColors, section: usize, index: usize, kind: &ModuleKind, enabled: bool) -> Element<'static, Message> {
     let label = kind_label(kind);
     let mut r = row![checkbox(label, enabled).on_toggle(move |_| Message::ToggleModule(section, index))].spacing(8);
-    if let ModuleKind::Clock { timezone } = kind {
+    if let ModuleKind::Clock { timezone, .. } = kind {
         r = r.push(
             text_input("IANA tz, e.g. America/Chicago (blank = local)", timezone)
                 .size(11)

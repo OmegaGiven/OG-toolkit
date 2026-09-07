@@ -1589,8 +1589,6 @@ dependencies = [
 [[package]]
 name = "iced_layershell"
 version = "0.13.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c9ff107c0d7ca85e81566f391f5acabc2473f87ed7de33aaef7b4d600592067"
 dependencies = [
  "futures",
  "iced",
@@ -2501,6 +2499,7 @@ dependencies = [
  "iced_layershell",
  "libc",
  "og-config",
+ "og-drag",
  "og-theme",
  "serde",
  "serde_json",
@@ -2514,6 +2513,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "og-drag"
+version = "0.1.0"
+dependencies = [
+ "iced",
 ]
 
 [[package]]

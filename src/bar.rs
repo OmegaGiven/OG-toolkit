@@ -1,19 +1,22 @@
-use iced::widget::{column, container, row};
-use iced::{Element, Length, Subscription, Task};
+use iced::widget::{column, container, mouse_area, row, text};
+use iced::{Background, Border, Color, Element, Length, Subscription, Task};
 
 use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
 
 use og_config::{BarConfig, BarSection, Config, Edge, ModuleConfig, ModuleKind, SectionAlign};
 use og_theme::AppColors;
 
+use crate::icon_font;
 use crate::message::Message;
 use crate::module::{Module, Orientation};
 use crate::modules::bluetooth::Bluetooth;
+use crate::modules::clipboard::Clipboard;
 use crate::modules::clock::Clock;
 use crate::modules::cpu::Cpu;
 use crate::modules::launcher::Launcher;
 use crate::modules::memory::Memory;
 use crate::modules::network::Network;
+use crate::modules::notifications::Notifications;
 use crate::modules::pulseaudio::Pulseaudio;
 use crate::modules::tray::Tray;
 use crate::modules::workspaces::Workspaces;
@@ -21,23 +24,27 @@ use crate::popup::{PopupKind, PopupState};
 use crate::power::PowerButton;
 use crate::settings::SettingsButton;
 
-fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRule], hour12: bool) -> Vec<Box<dyn Module>> {
+fn build_modules(list: &[ModuleConfig], icon_rewrite: &[og_config::IconRewriteRule]) -> Vec<Box<dyn Module>> {
     list.iter()
         .filter(|m| m.enabled)
         .filter_map(|m| -> Option<Box<dyn Module>> {
             match &m.kind {
                 ModuleKind::Workspaces => Some(Box::new(Workspaces::new(icon_rewrite.to_vec()))),
-                ModuleKind::Clock { timezone } => Some(Box::new(Clock::new(timezone.clone(), hour12))),
+                ModuleKind::Clock { timezone, hour12, show_timezone, show_date } => {
+                    Some(Box::new(Clock::new(timezone.clone(), *hour12, *show_timezone, *show_date)))
+                }
                 ModuleKind::Launcher { icon, command, .. } => {
                     Some(Box::new(Launcher::new(icon.clone(), command.clone())))
                 }
                 ModuleKind::Power => Some(Box::new(PowerButton)),
-                ModuleKind::Settings => Some(Box::new(SettingsButton)),
+                ModuleKind::Settings => Some(Box::new(SettingsButton::new())),
                 ModuleKind::Cpu => Some(Box::new(Cpu::new())),
                 ModuleKind::Memory => Some(Box::new(Memory::new())),
                 ModuleKind::Network => Some(Box::new(Network::new())),
                 ModuleKind::Bluetooth => Some(Box::new(Bluetooth::new())),
                 ModuleKind::Pulseaudio => Some(Box::new(Pulseaudio::new())),
+                ModuleKind::Notifications => Some(Box::new(Notifications::new())),
+                ModuleKind::Clipboard => Some(Box::new(Clipboard)),
                 ModuleKind::Tray => Some(Box::new(Tray::new())),
             }
         })
@@ -54,13 +61,13 @@ struct SectionRuntime {
     modules: Vec<Box<dyn Module>>,
 }
 
-fn build_sections(cfg: &BarConfig, hour12: bool) -> Vec<SectionRuntime> {
+fn build_sections(cfg: &BarConfig) -> Vec<SectionRuntime> {
     cfg.sections
         .iter()
         .map(|s| SectionRuntime {
             percent: s.percent,
             align: s.align,
-            modules: build_modules(&s.modules, &cfg.icon_rewrite, hour12),
+            modules: build_modules(&s.modules, &cfg.icon_rewrite),
         })
         .collect()
 }
@@ -68,18 +75,30 @@ fn build_sections(cfg: &BarConfig, hour12: bool) -> Vec<SectionRuntime> {
 pub struct Bar {
     colors: AppColors,
     bar_cfg: BarConfig,
-    /// Cached at startup, same as `colors` — not live-reloaded, matches
-    /// how the rest of the shared theme Config already behaves here.
-    hour12: bool,
     sections: Vec<SectionRuntime>,
     popup: Option<PopupState>,
     /// Click-hold-drag state for moving an app icon to another
-    /// workspace — (con_id, workspace it started on). No visual
-    /// drop-target highlight for now (Module::view has no way to learn
-    /// this without a trait-wide signature change); this only drives the
-    /// functional move-on-release behavior.
+    /// workspace — (con_id, workspace it started on).
     drag_origin: Option<(i64, i32)>,
     hover_ws: Option<i32>,
+    /// Icon glyph of the window being dragged and the latest cursor
+    /// position, both `None` outside a drag — together they're what
+    /// `bar_view` needs to render the og-drag ghost overlay at the
+    /// cursor. `drag_cursor` only starts updating once a `CursorMoved`
+    /// actually arrives after the press (see `subscription`), rather than
+    /// snapping to some stale position from before the drag began.
+    drag_icon: Option<String>,
+    drag_cursor: Option<iced::Point>,
+    /// Output names (e.g. "DP-3") with a fullscreen window on them right
+    /// now — takes priority over auto_hide/hover in desired_size().
+    fullscreen_outputs: std::collections::HashSet<String>,
+    /// Surfaces currently hovered — only meaningful when bar_cfg.auto_hide
+    /// is set; drives reveal-on-hover in desired_size().
+    hovered: std::collections::HashSet<iced::window::Id>,
+    /// Last size applied per surface, so SizeChange only goes out when
+    /// the desired size actually changes, not on every event that could
+    /// have affected it.
+    applied_size: std::collections::HashMap<iced::window::Id, (u32, u32)>,
 }
 
 impl Bar {
@@ -87,9 +106,14 @@ impl Bar {
         let bar_cfg = BarConfig::load();
         let config = Config::load();
         let colors = AppColors::from_config(&config, "og-bar");
-        let hour12 = config.clock_12h;
-        let sections = build_sections(&bar_cfg, hour12);
-        let bar = Self { sections, colors, bar_cfg, hour12, popup: None, drag_origin: None, hover_ws: None };
+        let sections = build_sections(&bar_cfg);
+        let bar = Self {
+            sections, colors, bar_cfg, popup: None,
+            drag_origin: None, hover_ws: None, drag_icon: None, drag_cursor: None,
+            fullscreen_outputs: std::collections::HashSet::new(),
+            hovered: std::collections::HashSet::new(),
+            applied_size: std::collections::HashMap::new(),
+        };
         (bar, Task::none())
     }
 
@@ -103,10 +127,56 @@ impl Bar {
 }
 
 fn rebuild_modules(bar: &mut Bar) {
-    bar.sections = build_sections(&bar.bar_cfg, bar.hour12);
+    bar.sections = build_sections(&bar.bar_cfg);
+}
+
+/// Bar reveal strip thickness while auto_hide is on and the surface isn't
+/// hovered — thin enough to be unobtrusive, thick enough to reliably
+/// catch the pointer at the screen edge.
+pub const REVEAL_STRIP: u32 = 4;
+
+/// The surface size a given window should have right now: shrunk to
+/// nothing if its output is fullscreen (takes priority — see the
+/// fullscreen-focus-loss finding this exists to work around), else the
+/// reveal strip if auto_hide is on and it isn't hovered, else full size.
+fn desired_size(bar: &Bar, output_name: Option<&str>, hovered: bool) -> (u32, u32) {
+    if output_name.is_some_and(|n| bar.fullscreen_outputs.contains(n)) {
+        return (1, 1);
+    }
+    let (main_zero, thickness) = match bar.bar_cfg.position {
+        Edge::Top | Edge::Bottom => (true, bar.bar_cfg.thickness),
+        Edge::Left | Edge::Right => (false, bar.bar_cfg.thickness),
+    };
+    let cross = if bar.bar_cfg.auto_hide && !hovered { REVEAL_STRIP } else { thickness };
+    if main_zero { (0, cross) } else { (cross, 0) }
+}
+
+/// Recomputes every known surface's desired size and emits SizeChange
+/// only for the ones that actually changed — called after anything that
+/// could affect it (fullscreen state, hover state).
+fn sync_sizes(bar: &mut Bar) -> Task<Message> {
+    let changes: Vec<Message> = iced_layershell::output_registry::known_ids()
+        .into_iter()
+        .filter_map(|(id, name)| {
+            let hovered = bar.hovered.contains(&id);
+            let size = desired_size(bar, name.as_deref(), hovered);
+            if bar.applied_size.get(&id) == Some(&size) {
+                return None;
+            }
+            bar.applied_size.insert(id, size);
+            Some(Message::SizeChange { id, size })
+        })
+        .collect();
+    if changes.is_empty() {
+        Task::none()
+    } else {
+        Task::batch(changes.into_iter().map(Task::done))
+    }
 }
 
 pub fn remove_id(bar: &mut Bar, id: iced::window::Id) {
+    bar.applied_size.remove(&id);
+    bar.hovered.remove(&id);
     if bar.popup.as_ref().is_some_and(|p| p.id == id) {
         bar.popup = None;
     }
@@ -114,6 +184,10 @@ pub fn remove_id(bar: &mut Bar, id: iced::window::Id) {
 
 pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
     match &message {
+        Message::WatchdogPing => {
+            crate::watchdog::ping();
+            return Task::none();
+        }
         Message::FocusWorkspace(name) => {
             let name = name.clone();
             return Task::future(async move {
@@ -124,10 +198,12 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 Message::Tick
             });
         }
-        Message::WindowDragStart(con_id, origin_ws) => {
+        Message::WindowDragStart(con_id, origin_ws, icon) => {
             let con_id = *con_id;
             bar.drag_origin = Some((con_id, *origin_ws));
             bar.hover_ws = None;
+            bar.drag_icon = Some(icon.clone());
+            bar.drag_cursor = None;
             // Same focus-on-click behavior FocusWindow used to provide —
             // a plain click is just a press+release with no group-hover
             // change in between, so this fires every time regardless of
@@ -143,7 +219,14 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
         Message::WorkspaceGroupHovered(ws_num) => {
             bar.hover_ws = Some(*ws_num);
         }
+        Message::WindowDragCursorMoved(pos) => {
+            if bar.drag_origin.is_some() {
+                bar.drag_cursor = Some(*pos);
+            }
+        }
         Message::WindowDragEnd => {
+            bar.drag_icon = None;
+            bar.drag_cursor = None;
             if let Some((con_id, origin_ws)) = bar.drag_origin.take() {
                 if let Some(target_ws) = bar.hover_ws.take() {
                     if target_ws != origin_ws {
@@ -166,6 +249,32 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 Message::Tick
             });
         }
+        Message::TrayContextMenu(address, menu_path, entries) => {
+            let id = iced::window::Id::unique();
+            bar.popup = Some(PopupState {
+                id,
+                kind: PopupKind::Tray { address: address.clone(), menu_path: menu_path.clone(), entries: entries.clone() },
+            });
+            let direction = match bar.bar_cfg.position {
+                Edge::Bottom => MenuDirection::Up,
+                Edge::Top | Edge::Left | Edge::Right => MenuDirection::Down,
+            };
+            return Task::done(Message::NewMenu {
+                settings: IcedNewMenuSettings { size: (220, 320), direction },
+                id,
+            });
+        }
+        Message::TrayMenuItemActivate(address, menu_path, submenu_id) => {
+            let (address, menu_path, submenu_id) = (address.clone(), menu_path.clone(), *submenu_id);
+            if let Some(popup) = bar.popup.take() {
+                let close = Task::done(Message::RemoveWindow(popup.id));
+                let fire = Task::future(async move {
+                    crate::modules::tray::activate_menu_item(address, menu_path, submenu_id).await;
+                    Message::Tick
+                });
+                return Task::batch([close, fire]);
+            }
+        }
         Message::Launch(cmd) => {
             let cmd = cmd.clone();
             let _ = std::process::Command::new("sh")
@@ -181,6 +290,32 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             let _ = std::process::Command::new("pactl")
                 .args(["set-sink-mute", "@DEFAULT_SINK@", "toggle"])
                 .output();
+        }
+        Message::BluetoothTogglePower => {
+            let on = if crate::modules::bluetooth::is_powered() { "off" } else { "on" };
+            let _ = std::process::Command::new("bluetoothctl").args(["power", on]).output();
+        }
+        Message::WifiTogglePower => {
+            let action = if crate::modules::network::is_wifi_powered() { "block" } else { "unblock" };
+            let _ = std::process::Command::new("rfkill").args([action, "wifi"]).output();
+        }
+        Message::OpenBluetoothMenu => {
+            let id = iced::window::Id::unique();
+            bar.popup = Some(PopupState { id, kind: PopupKind::Bluetooth });
+            let direction = match bar.bar_cfg.position {
+                Edge::Bottom => MenuDirection::Up,
+                Edge::Top | Edge::Left | Edge::Right => MenuDirection::Down,
+            };
+            return Task::done(Message::NewMenu {
+                settings: IcedNewMenuSettings { size: (160, 190), direction },
+                id,
+            });
+        }
+        Message::BluetoothAction(action) => {
+            action.run();
+            if let Some(popup) = bar.popup.take() {
+                return Task::done(Message::RemoveWindow(popup.id));
+            }
         }
         Message::OpenPowerMenu => {
             let id = iced::window::Id::unique();
@@ -315,7 +450,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
         }
         Message::SetClockTimezone(section, index, tz) => {
             if let Some(m) = bar.bar_cfg.sections.get_mut(*section).and_then(|s| s.modules.get_mut(*index)) {
-                if let ModuleKind::Clock { timezone } = &mut m.kind {
+                if let ModuleKind::Clock { timezone, .. } = &mut m.kind {
                     *timezone = tz.clone();
                 }
             }
@@ -374,6 +509,18 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 return Task::done(Message::RemoveWindow(id));
             }
         }
+        Message::FullscreenOutputsUpdated(outputs) => {
+            bar.fullscreen_outputs = outputs.clone();
+            return sync_sizes(bar);
+        }
+        Message::BarHoverChanged(id, hovered) => {
+            if *hovered {
+                bar.hovered.insert(*id);
+            } else {
+                bar.hovered.remove(id);
+            }
+            return sync_sizes(bar);
+        }
         _ => {}
     }
 
@@ -409,10 +556,28 @@ pub fn view(bar: &Bar, id: iced::window::Id) -> Element<'_, Message> {
                 PopupKind::WindowMenu { con_id, other_workspaces } => {
                     crate::window_menu::popup_view(bar.colors, *con_id, other_workspaces)
                 }
+                PopupKind::Tray { address, menu_path, entries } => {
+                    crate::modules::tray::popup_view(bar.colors, address, menu_path, entries)
+                }
+                PopupKind::Bluetooth => crate::modules::bluetooth::popup_view(bar.colors),
             };
         }
     }
-    bar_view(bar)
+    if bar.applied_size.get(&id) == Some(&(1, 1)) {
+        return text("").into();
+    }
+
+    let content = bar_view(bar);
+    if bar.bar_cfg.auto_hide {
+        // mouse_area passes events through to content underneath —
+        // Length::Fill so it covers the *whole* surface, however small
+        // (the reveal strip), not just bar_view's own rendered footprint.
+        return mouse_area(container(content).width(Length::Fill).height(Length::Fill))
+            .on_enter(Message::BarHoverChanged(id, true))
+            .on_exit(Message::BarHoverChanged(id, false))
+            .into();
+    }
+    content
 }
 
 fn bar_view(bar: &Bar) -> Element<'_, Message> {
@@ -484,14 +649,41 @@ fn bar_view(bar: &Bar) -> Element<'_, Message> {
         }
     };
 
-    container(content)
+    let bar_surface: Element<'_, Message> = container(content)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(move |_| container::Style {
             background: Some(bar.colors.bg_fill),
             ..Default::default()
         })
-        .into()
+        .into();
+
+    // Visual confirmation for the workspace app-icon drag (move a window
+    // to another workspace group) — a copy of the dragged icon rides the
+    // cursor instead of the drag being invisible until release.
+    match (&bar.drag_icon, bar.drag_cursor) {
+        (Some(icon), Some(cursor)) => {
+            let ghost = drag_ghost_icon(bar.colors, icon);
+            og_drag::with_drag_ghost(bar_surface, Some(ghost), cursor, iced::Vector::new(14.0, 14.0))
+        }
+        _ => bar_surface,
+    }
+}
+
+fn drag_ghost_icon<'a>(colors: AppColors, icon: &str) -> Element<'a, Message> {
+    container(
+        text(icon.to_string())
+            .size(20)
+            .font(icon_font::font_for(icon))
+            .style(move |_| text::Style { color: Some(colors.text) }),
+    )
+    .padding(6)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(Color { a: 0.85, ..colors.accent })),
+        border: Border { radius: colors.radius.into(), ..Default::default() },
+        ..Default::default()
+    })
+    .into()
 }
 
 pub fn subscription(bar: &Bar) -> Subscription<Message> {
@@ -565,10 +757,30 @@ pub fn subscription(bar: &Bar) -> Subscription<Message> {
         }
     });
 
+    // Gated on drag_origin (unlike window_drag_release above, which needs
+    // to fire regardless) — cursor position is only meaningful, and this
+    // listener only worth running, while a drag is actually in progress.
+    let window_drag_cursor = if bar.drag_origin.is_some() {
+        iced::event::listen_with(|event, _status, _id| {
+            if let iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) = event {
+                Some(Message::WindowDragCursorMoved(position))
+            } else {
+                None
+            }
+        })
+    } else {
+        Subscription::none()
+    };
+
+    // Liveness heartbeat for systemd's WatchdogSec — a subscription so the
+    // ping only happens if the update loop is actually turning over.
+    let watchdog_ping = iced::time::every(std::time::Duration::from_secs(crate::watchdog::PING_SECS))
+        .map(|_| Message::WatchdogPing);
+
     Subscription::batch(
         bar.all_modules()
             .map(|m| m.subscription())
-            .chain([escape_closes_popup, click_reports_window, popup_dismiss_on_activity, window_drag_release]),
+            .chain([escape_closes_popup, click_reports_window, popup_dismiss_on_activity, window_drag_release, window_drag_cursor, watchdog_ping]),
     )
 }
 

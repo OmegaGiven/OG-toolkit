@@ -30,17 +30,18 @@ pub fn read_muted() -> bool {
 pub struct Pulseaudio {
     volume_pct: u32,
     muted: bool,
+    hovered: bool,
 }
 
 impl Pulseaudio {
     pub fn new() -> Self {
-        Self { volume_pct: read_volume_pct().unwrap_or(0), muted: read_muted() }
+        Self { volume_pct: read_volume_pct().unwrap_or(0), muted: read_muted(), hovered: false }
     }
 }
 
 impl Module for Pulseaudio {
     fn view(&self, colors: AppColors, size: u32, _orientation: Orientation) -> Element<'_, Message> {
-        let fg = colors.text;
+        let fg = if self.muted { Color::WHITE } else { colors.text };
         // Icon glyph and the percentage text can't share one Text widget —
         // Symbols Nerd Font has no ASCII/digit glyphs at all, so a joined
         // string tofu's everything but the icon. Two widgets, two fonts,
@@ -64,12 +65,23 @@ impl Module for Pulseaudio {
             )
             .style(move |_| container::Style {
                 border: Border { radius: colors.radius.into(), ..Default::default() },
-                background: Some(Background::Color(Color::TRANSPARENT)),
+                // Muted red wins over hover — same danger-red og-settings'
+                // Audio tab uses for its mute button, so a muted state
+                // reads the same way from either app.
+                background: Some(Background::Color(if self.muted {
+                    Color { r: 0.6, g: 0.1, b: 0.1, a: 1.0 }
+                } else if self.hovered {
+                    colors.header_btn_bg
+                } else {
+                    Color::TRANSPARENT
+                })),
                 ..Default::default()
             }),
         )
         .on_press(Message::PulseaudioToggleMute)
-        .on_right_press(Message::Launch("pavucontrol".to_string()))
+        .on_right_press(Message::Launch("og-settings --tab audio".to_string()))
+        .on_enter(Message::PulseaudioHover(true))
+        .on_exit(Message::PulseaudioHover(false))
         .into()
     }
 
@@ -81,6 +93,9 @@ impl Module for Pulseaudio {
         if let Message::Tick | Message::PulseaudioToggleMute = message {
             self.volume_pct = read_volume_pct().unwrap_or(self.volume_pct);
             self.muted = read_muted();
+        }
+        if let Message::PulseaudioHover(v) = message {
+            self.hovered = *v;
         }
     }
 }
