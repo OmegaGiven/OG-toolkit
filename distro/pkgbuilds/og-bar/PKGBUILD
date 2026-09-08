@@ -9,26 +9,25 @@
 # git+file:// clone would silently drop in favor of a stale commit. This
 # packages what's actually on disk right now.
 pkgname=og-bar
-pkgver=0.1.0
+pkgver=20260908
 pkgrel=1
 pkgdesc="OG-toolkit taskbar (workspaces, clock, tray, system stats, quick toggles)"
 arch=('x86_64')
-url="https://github.com/OmegaGiven/OG-bar"
-license=('unknown')
+url="https://github.com/OmegaGiven/OG-toolkit"
+license=('MIT')
 depends=('gcc-libs' 'wayland' 'ttf-nerd-fonts-symbols' 'wl-clipboard' 'grim' 'slurp')
 makedepends=('cargo' 'rsync')
 source=()
 
 prepare() {
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-bar/" "$srcdir/og-bar/"
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+  rsync -a --exclude target --exclude .git --exclude pkg --exclude distro "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
 }
 
 build() {
-  cd "$srcdir/og-bar"
+  cd "$srcdir/OG-toolkit/apps/og-bar"
   cargo build --release
 }
 
 package() {
-  install -Dm755 "$srcdir/og-bar/target/release/og-bar" "$pkgdir/usr/bin/og-bar"
+  install -Dm755 "$srcdir/OG-toolkit/target/release/og-bar" "$pkgdir/usr/bin/og-bar"
 }

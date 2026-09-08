@@ -8,8 +8,8 @@ name = "og-notif-center"
 path = "src/main.rs"
 
 [dependencies]
-og-config = { path = "../OG-toolkit/crates/og-config" }
-og-theme = { path = "../OG-toolkit/crates/og-theme" }
+og-config = { path = "../../crates/og-config" }
+og-theme = { path = "../../crates/og-theme" }
 iced = { version = "0.13", default-features = false, features = ["wgpu", "tiny-skia", "advanced", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

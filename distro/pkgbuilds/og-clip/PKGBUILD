@@ -4,26 +4,25 @@
 # tree, not git — these repos carry uncommitted work a git+file:// clone
 # would silently drop.
 pkgname=og-clip
-pkgver=0.1.0
+pkgver=20260908
 pkgrel=1
 pkgdesc="OG-toolkit clipboard history"
 arch=('x86_64')
-url="https://github.com/OmegaGiven/og-clip"
-license=('unknown')
+url="https://github.com/OmegaGiven/OG-toolkit"
+license=('MIT')
 depends=('gcc-libs' 'wayland' 'wl-clipboard')
 makedepends=('cargo' 'rsync')
 source=()
 
 prepare() {
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-clip/" "$srcdir/og-clip/"
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+  rsync -a --exclude target --exclude .git --exclude pkg --exclude distro "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
 }
 
 build() {
-  cd "$srcdir/og-clip"
+  cd "$srcdir/OG-toolkit/apps/og-clip"
   cargo build --release
 }
 
 package() {
-  install -Dm755 "$srcdir/og-clip/target/release/og-clip" "$pkgdir/usr/bin/og-clip"
+  install -Dm755 "$srcdir/OG-toolkit/target/release/og-clip" "$pkgdir/usr/bin/og-clip"
 }

@@ -7,26 +7,25 @@
 # Sources via rsync from the LIVE working tree, not git — these repos
 # carry uncommitted work a git+file:// clone would silently drop.
 pkgname=og-files
-pkgver=0.1.0
+pkgver=20260908
 pkgrel=1
 pkgdesc="OG-toolkit file manager"
 arch=('x86_64')
-url="https://github.com/OmegaGiven/OG-file-manager"
-license=('unknown')
+url="https://github.com/OmegaGiven/OG-toolkit"
+license=('MIT')
 depends=('gcc-libs' 'wayland' 'ttf-nerd-fonts-symbols' 'xdg-utils')
 makedepends=('cargo' 'rsync')
 source=()
 
 prepare() {
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/file-manager/" "$srcdir/file-manager/"
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+  rsync -a --exclude target --exclude .git --exclude pkg --exclude distro "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
 }
 
 build() {
-  cd "$srcdir/file-manager"
+  cd "$srcdir/OG-toolkit/apps/og-files"
   cargo build --release
 }
 
 package() {
-  install -Dm755 "$srcdir/file-manager/target/release/og-files" "$pkgdir/usr/bin/og-files"
+  install -Dm755 "$srcdir/OG-toolkit/target/release/og-files" "$pkgdir/usr/bin/og-files"
 }

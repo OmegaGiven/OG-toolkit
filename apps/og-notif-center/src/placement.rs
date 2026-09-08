@@ -20,7 +20,7 @@ fn estimate_module_width(kind: &ModuleKind, item_size: f32) -> f32 {
         ModuleKind::Workspaces => item_size * 4.0,
         ModuleKind::Clock { .. } => item_size * 3.5,
         ModuleKind::Tray => item_size * 3.0,
-        ModuleKind::Cpu | ModuleKind::Memory => item_size * 2.0,
+        ModuleKind::Cpu | ModuleKind::Memory | ModuleKind::Gpu => item_size * 2.0,
         ModuleKind::Network | ModuleKind::Bluetooth | ModuleKind::Pulseaudio => item_size * 1.5,
         ModuleKind::Notifications
         | ModuleKind::Clipboard

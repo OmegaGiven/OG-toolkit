@@ -6,26 +6,25 @@
 # OG-toolkit's working tree but weren't committed yet — a git+file://
 # clone silently built against the old committed enum and failed.
 pkgname=og-notif-center
-pkgver=0.1.0
+pkgver=20260908
 pkgrel=1
 pkgdesc="OG-toolkit notification history popup"
 arch=('x86_64')
-url="https://github.com/OmegaGiven/og-notif-center"
-license=('unknown')
+url="https://github.com/OmegaGiven/OG-toolkit"
+license=('MIT')
 depends=('gcc-libs' 'wayland')
 makedepends=('cargo' 'rsync')
 source=()
 
 prepare() {
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/og-notif-center/" "$srcdir/og-notif-center/"
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
+  rsync -a --exclude target --exclude .git --exclude pkg --exclude distro "$HOME/.local/src/OG-toolkit/" "$srcdir/OG-toolkit/"
 }
 
 build() {
-  cd "$srcdir/og-notif-center"
+  cd "$srcdir/OG-toolkit/apps/og-notif-center"
   cargo build --release
 }
 
 package() {
-  install -Dm755 "$srcdir/og-notif-center/target/release/og-notif-center" "$pkgdir/usr/bin/og-notif-center"
+  install -Dm755 "$srcdir/OG-toolkit/target/release/og-notif-center" "$pkgdir/usr/bin/og-notif-center"
 }

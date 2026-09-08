@@ -9,19 +9,19 @@
 # security note about NOPASSWD/setcap-style privilege grants. Sources
 # via rsync from the LIVE working tree, not git.
 pkgname=og-links
-pkgver=0.1.0
+pkgver=20260908
 pkgrel=1
 pkgdesc="OG-toolkit local shortcut redirect service (go/whatever)"
 arch=('x86_64')
-url="https://github.com/OmegaGiven/OG-links"
-license=('unknown')
+url="https://github.com/OmegaGiven/OG-toolkit"
+license=('MIT')
 depends=('gcc-libs')
 makedepends=('cargo' 'rsync')
 source=("og-links.service")
 sha256sums=('SKIP')
 
 prepare() {
-  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/galias/" "$srcdir/og-links/"
+  rsync -a --exclude target --exclude .git --exclude pkg "$HOME/.local/src/OG-toolkit/apps/og-links/" "$srcdir/og-links/"
 }
 
 build() {

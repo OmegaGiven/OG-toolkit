@@ -78,6 +78,7 @@ pub fn kind_label(kind: &ModuleKind) -> String {
         ModuleKind::Clock { .. } => "Clock".to_string(),
         ModuleKind::Cpu => "CPU".to_string(),
         ModuleKind::Memory => "Memory".to_string(),
+        ModuleKind::Gpu => "GPU".to_string(),
         ModuleKind::Tray => "Tray".to_string(),
         ModuleKind::Bluetooth => "Bluetooth".to_string(),
         ModuleKind::Network => "Network".to_string(),

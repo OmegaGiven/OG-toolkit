@@ -8,18 +8,18 @@
 # where the real PKGBUILDs install their binaries) rather than silently
 # shipping an ISO where Escape doesn't close these popups.
 pkgname=og-scripts
-pkgver=0.1.0
+pkgver=20260908
 pkgrel=1
 pkgdesc="OG-toolkit glue scripts (popup Escape-close coordination for og-search/og-notif-center)"
 arch=('x86_64')
-url="https://github.com/OmegaGiven"
-license=('unknown')
+url="https://github.com/OmegaGiven/OG-toolkit"
+license=('MIT')
 depends=('sway')
 source=(
-  "og-search-launch::file://$HOME/.local/src/og-os/pkgbuilds/og-scripts/files/og-search-launch"
-  "og-notif-center-launch::file://$HOME/.local/src/og-os/pkgbuilds/og-scripts/files/og-notif-center-launch"
-  "og-popup-escape-guard::file://$HOME/.local/src/og-os/pkgbuilds/og-scripts/files/og-popup-escape-guard"
-  "og-popup-escape-kill::file://$HOME/.local/src/og-os/pkgbuilds/og-scripts/files/og-popup-escape-kill"
+  "og-search-launch::file://$HOME/.local/src/OG-toolkit/distro/pkgbuilds/og-scripts/files/og-search-launch"
+  "og-notif-center-launch::file://$HOME/.local/src/OG-toolkit/distro/pkgbuilds/og-scripts/files/og-notif-center-launch"
+  "og-popup-escape-guard::file://$HOME/.local/src/OG-toolkit/distro/pkgbuilds/og-scripts/files/og-popup-escape-guard"
+  "og-popup-escape-kill::file://$HOME/.local/src/OG-toolkit/distro/pkgbuilds/og-scripts/files/og-popup-escape-kill"
 )
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
 

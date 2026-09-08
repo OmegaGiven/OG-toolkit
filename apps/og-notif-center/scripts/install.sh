@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release
 
-bin="target/release/og-notif-center"
+bin="../../target/release/og-notif-center"
 dest="$HOME/.local/bin/og-notif-center"
 tmp="${dest}.new"
 

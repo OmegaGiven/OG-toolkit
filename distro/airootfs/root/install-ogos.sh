@@ -200,6 +200,21 @@ cat >> /etc/hosts <<HOSTS_EOF
 127.0.1.1   $HOSTNAME_VAL.localdomain $HOSTNAME_VAL
 HOSTS_EOF
 
+# Real, persistent [ogos] repo entry — unlike the throwaway
+# pacman-install.conf above (file:///root/ogos-repo, an ISO-local path
+# that doesn't exist once this is a real installed system), this is the
+# one og-settings' Updates tab and any later `pacman -Syu` actually see.
+# Without it, an installed system has zero update path for its own
+# desktop suite: pacstrap only ever reads pacman-install.conf, and the
+# target's own /etc/pacman.conf (pacman's stock default) has no [ogos]
+# section at all unless something adds it here.
+cat >> /etc/pacman.conf <<PACMAN_EOF
+
+[ogos]
+SigLevel = Optional TrustAll
+Server = https://omegagiven.github.io/OG-os-repo/x86_64
+PACMAN_EOF
+
 mkinitcpio -P
 
 useradd -m -G wheel -s /usr/bin/zsh "$USERNAME"
