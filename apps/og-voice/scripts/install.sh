@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release
 
-bin="target/release/og-voice"
+bin="../../target/release/og-voice"
 dest="$HOME/.local/bin/og-voice"
 tmp="${dest}.new"
 

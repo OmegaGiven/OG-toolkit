@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release
 
-bin="target/release/og-wallpaper"
+bin="../../target/release/og-wallpaper"
 dest="$HOME/.local/bin/og-wallpaper"
 tmp="${dest}.new"
 

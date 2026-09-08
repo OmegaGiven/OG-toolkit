@@ -8,8 +8,8 @@ name = "og-wallpaper-studio"
 path = "src/main.rs"
 
 [dependencies]
-og-config = { path = "../OG-toolkit/crates/og-config" }
-og-theme = { path = "../OG-toolkit/crates/og-theme" }
-og-wallpaper-core = { path = "../OG-toolkit/crates/og-wallpaper-core" }
+og-config = { path = "../../crates/og-config" }
+og-theme = { path = "../../crates/og-theme" }
+og-wallpaper-core = { path = "../../crates/og-wallpaper-core" }
 iced = { version = "0.13", default-features = false, features = ["tiny-skia", "canvas", "image"] }
 rfd = "0.15"

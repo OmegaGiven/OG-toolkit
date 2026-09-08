@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release
 
-bin="target/release/og-hotkeys"
+bin="../../target/release/og-hotkeys"
 dest="$HOME/.local/bin/og-hotkeys"
 tmp="${dest}.new"
 
