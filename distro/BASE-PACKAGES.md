@@ -18,7 +18,16 @@ og-settings' Audio tab (but see note below).
 ## Base groups
 
 ### Core system (required, no debate)
-`base` `base-devel` `linux` `linux-firmware` `amd-ucode` `intel-ucode` `sudo` `efibootmgr`
+`base` `base-devel` `linux` `linux-firmware` `amd-ucode` `intel-ucode` `sudo` `efibootmgr` `cryptsetup` `snapper`
+
+`cryptsetup`/`snapper` added 2026-09-08 — the installer now offers real
+LUKS2 disk encryption and, on btrfs, real snapper-backed snapshots (auto
+pre/post-pacman-transaction via a hand-rolled pacman hook pair, since
+snap-pac is AUR-only and not worth pulling into a chroot with no build
+user set up). Both packages are base regardless of whether a given
+install actually uses either — same "install once, ISO stays
+hardware/choice-agnostic" logic as the GPU driver breadth below, not
+tied to this machine's own setup.
 
 `intel-ucode` isn't on this AMD box but must ship in a general ISO — same
 logic as keeping all GPU drivers (section "Hardware breadth" below).
