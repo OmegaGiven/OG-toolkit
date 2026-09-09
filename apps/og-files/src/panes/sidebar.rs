@@ -63,7 +63,7 @@ fn nav_button<'a>(icon: &'a str, label: String, path: PathBuf, is_active: bool) 
         .into()
 }
 
-fn drive_row<'a>(icon: &'a str, label: &'a str, used: u64, total: u64, mount_point: Option<PathBuf>, is_active: bool, actions: Element<'a, Message>) -> Element<'a, Message> {
+fn drive_row<'a>(icon: &'a str, label: &'a str, used: u64, total: u64, on_click: Option<Message>, is_active: bool, actions: Element<'a, Message>) -> Element<'a, Message> {
     let pal = theme::p();
     let fraction = if total == 0 { 0.0 } else { used as f32 / total as f32 };
 
@@ -99,9 +99,9 @@ fn drive_row<'a>(icon: &'a str, label: &'a str, used: u64, total: u64, mount_poi
         ..Default::default()
     });
 
-    if let Some(mp) = mount_point.filter(|_| !is_active) {
+    if let Some(msg) = on_click {
         button(inner)
-            .on_press(Message::Navigate(mp))
+            .on_press(msg)
             .padding(0)
             .style(move |_, status| button::Style {
                 background: Some(Background::Color(match status {
@@ -171,7 +171,8 @@ pub fn view<'a>(
     }
     for drive in fixed_devices {
         let is_active = current_path == &drive.mount_point;
-        col = col.push(drive_row("\u{f0a0}", &drive.label, drive.used, drive.total, Some(drive.mount_point.clone()), is_active, iced::widget::Space::with_width(0).into()));
+        let click = (!is_active).then(|| Message::Navigate(drive.mount_point.clone()));
+        col = col.push(drive_row("\u{f0a0}", &drive.label, drive.used, drive.total, click, is_active, iced::widget::Space::with_width(0).into()));
     }
     for dev in removable {
         let is_active = dev.mount_point.as_ref() == Some(current_path);
@@ -185,7 +186,19 @@ pub fn view<'a>(
         } else {
             icon_action_btn("\u{f019}", Message::DeviceMount(dev.dev.clone()), false)
         };
-        col = col.push(drive_row("\u{f287}", &dev.label, 0, 0, dev.mount_point.clone(), is_active, actions));
+        // Unmounted: clicking the row mounts it (Message::DeviceMounted
+        // auto-navigates in once it succeeds — see app.rs). Mounted and
+        // not the active folder: clicking navigates straight in, same as
+        // any other drive. Mounted and active: no click target, matches
+        // every other row here.
+        let click = if is_active {
+            None
+        } else if dev.is_mounted() {
+            dev.mount_point.clone().map(Message::Navigate)
+        } else {
+            Some(Message::DeviceMount(dev.dev.clone()))
+        };
+        col = col.push(drive_row("\u{f287}", &dev.label, 0, 0, click, is_active, actions));
     }
 
     col = col.push(section_label("Network"));
@@ -194,7 +207,8 @@ pub fn view<'a>(
     }
     for drive in network {
         let is_active = current_path == &drive.mount_point;
-        col = col.push(drive_row("\u{f0ac}", &drive.label, drive.used, drive.total, Some(drive.mount_point.clone()), is_active, iced::widget::Space::with_width(0).into()));
+        let click = (!is_active).then(|| Message::Navigate(drive.mount_point.clone()));
+        col = col.push(drive_row("\u{f0ac}", &drive.label, drive.used, drive.total, click, is_active, iced::widget::Space::with_width(0).into()));
     }
 
     col = col.push(section_label("Recent"));

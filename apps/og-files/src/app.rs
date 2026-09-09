@@ -1562,6 +1562,7 @@ impl App {
             watcher_subscription(),
             thumbs_subscription(),
             jobs_subscription(),
+            devices_subscription(),
         ];
         if let Some(rx) = &self.drop_rx {
             let _ = rx; // presence check only — the tick below always polls if Some
@@ -1592,6 +1593,39 @@ fn thumbs_subscription() -> Subscription<Message> {
                 if ready.is_some() {
                     let _ = sender.send(Message::ThumbnailTick).await;
                 }
+            }
+        })
+    })
+}
+
+/// Polls for removable drives being plugged/unplugged/mounted elsewhere.
+/// `devices::list()` shells out to `lsblk` each call — cheap, but not
+/// free enough to poll every frame, so this ticks every 2s and only ever
+/// sends a message when the list actually changed (a `udev` event stream
+/// would be the "properly" reactive way to do this; this is the
+/// pragmatic version — same tradeoff as `watcher.rs` polling instead of
+/// something fancier). Fixed/network drives are re-read alongside it —
+/// cheap enough, and it means the same tick also catches a network share
+/// getting mounted/unmounted from outside this app.
+fn devices_subscription() -> Subscription<Message> {
+    Subscription::run(|| {
+        iced::stream::channel(4, |mut sender| async move {
+            let mut last: Option<(Vec<Device>, Vec<DriveInfo>, Vec<DriveInfo>)> = None;
+            loop {
+                let current = tokio::task::spawn_blocking(|| {
+                    let removable = crate::devices::list();
+                    let (fixed, network) = filesystem::list_drives();
+                    (removable, fixed, network)
+                })
+                .await
+                .unwrap_or_default();
+
+                if last.as_ref() != Some(&current) {
+                    let (removable, fixed, network) = current.clone();
+                    let _ = sender.send(Message::DevicesRefreshed(removable, fixed, network)).await;
+                    last = Some(current);
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         })
     })

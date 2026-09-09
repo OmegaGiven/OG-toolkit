@@ -23,7 +23,21 @@ fn thumbnail<'a>(entry: &'a FileEntry, size: u16) -> Element<'a, Message> {
                 .into();
         }
     }
-    text(entry.icon).font(ICON_FONT).size(size).into()
+    // Icon-glyph fallback (folders, and any file without a real
+    // thumbnail): unlike the image path above, a bare `text()` widget has
+    // no width/height of its own — at a large zoom level its glyph point
+    // size (== `size`, up to 160) grew taller than the grid card itself,
+    // pushing the filename below it clean out of the card's fixed height
+    // and off-screen. A glyph reads fine well under the box size, so it's
+    // capped, then centered in a box matching the image path's footprint
+    // — same layout math for both branches regardless of zoom.
+    let glyph_size = (size / 2).clamp(20, 64);
+    container(text(entry.icon).font(ICON_FONT).size(glyph_size))
+        .width(size)
+        .height(size)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into()
 }
 
 pub fn view<'a>(

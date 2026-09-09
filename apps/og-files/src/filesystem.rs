@@ -500,7 +500,7 @@ fn spawn_terminal(dir: &Path, shell_command: Option<&str>) {
 
 // ── Drives (Devices / Network) ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DriveInfo {
     pub label: String,
     pub mount_point: PathBuf,
