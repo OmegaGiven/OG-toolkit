@@ -72,6 +72,16 @@ pub struct Tab {
     /// scroll the cursor into view (consumed by the view layer).
     pub scroll_to_cursor: bool,
 
+    /// Vertical scroll position and visible viewport height, both in
+    /// pixels — the file list uses these to only build widgets for rows
+    /// actually on screen (plus a little overscan) instead of every entry
+    /// in the folder every frame. `viewport_height` starts as a rough
+    /// guess from the window size (see `app.rs`'s window-size handler)
+    /// and gets replaced with the real measurement the moment `on_scroll`
+    /// fires — the guess only matters for the very first paint.
+    pub scroll_offset: f32,
+    pub viewport_height: f32,
+
     type_ahead: String,
     type_ahead_at: Option<Instant>,
     last_click: Option<(PathBuf, Instant)>,
@@ -106,6 +116,8 @@ impl Tab {
             path_edit: None,
             items_per_row: 1,
             scroll_to_cursor: false,
+            scroll_offset: 0.0,
+            viewport_height: 600.0,
             type_ahead: String::new(),
             type_ahead_at: None,
             last_click: None,
@@ -193,6 +205,7 @@ impl Tab {
         self.loading = true;
         self.load_gen += 1;
         self.type_ahead.clear();
+        self.scroll_offset = 0.0;
     }
 
     /// A fresh listing arrived. Keeps selection/cursor where it still makes

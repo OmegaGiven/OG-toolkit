@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, image, mouse_area, row, text, text_input, Space},
+    widget::{button, column, container, image, mouse_area, row, scrollable, text, text_input, Space},
     Background, Border, Color, Element, Length, Point, Size, Subscription, Task,
 };
 use iced::futures::SinkExt;
@@ -174,6 +174,9 @@ pub enum Message {
 
     WatcherBatch(Vec<PathBuf>),
     ThumbnailTick,
+    /// (absolute y offset, visible viewport height) — drives the file
+    /// list's virtualization, see `panes::filelist`.
+    Scrolled(f32, f32),
 
     DevicesRefreshed(Vec<Device>, Vec<DriveInfo>, Vec<DriveInfo>),
     DeviceMount(String),
@@ -309,7 +312,14 @@ impl App {
         self.resync_watcher();
         let id = self.active().id;
         let gen = self.active().load_gen;
-        load_task(id, path, gen, self.active().show_hidden)
+        // Tab::go already zeroed tab.scroll_offset (the value the
+        // virtualization math uses), but the scrollable widget itself
+        // remembers its own on-screen position by Id across navigations —
+        // without this it'd stay scrolled halfway down a long folder
+        // after jumping into a short one, showing nothing but the bottom
+        // overscan's blank space until the user manually scrolled up.
+        let reset_scroll = scrollable::snap_to(scrollable::Id::new("filelist"), scrollable::RelativeOffset::START);
+        Task::batch([load_task(id, path, gen, self.active().show_hidden), reset_scroll])
     }
 
     fn reload_current(&mut self) -> Task<Message> {
@@ -906,6 +916,11 @@ impl App {
 
             Message::WatcherBatch(dirs) => self.touch_dirs(&dirs),
             Message::ThumbnailTick => {} // view() re-reads the thumbs cache on the next frame; nothing to store
+            Message::Scrolled(offset_y, viewport_height) => {
+                let tab = self.active_mut();
+                tab.scroll_offset = offset_y;
+                tab.viewport_height = viewport_height;
+            }
 
             Message::DevicesRefreshed(rem, fixed, net) => {
                 self.removable = rem;
@@ -1249,6 +1264,8 @@ impl App {
             if self.file_drag.is_some() { self.drop_hover.as_ref() } else { None },
             tab.card_size(),
             &self.items_per_row,
+            tab.scroll_offset,
+            tab.viewport_height,
         );
 
         let status_str = self.selection_status();

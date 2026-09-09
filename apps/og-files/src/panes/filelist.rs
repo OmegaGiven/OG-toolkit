@@ -40,6 +40,16 @@ fn thumbnail<'a>(entry: &'a FileEntry, size: u16) -> Element<'a, Message> {
         .into()
 }
 
+/// Rows outside the visible viewport (plus this many extra rows of
+/// overscan on each side, so a fast scroll flick doesn't show a blank
+/// flash before the next frame catches up) get a plain `Space` instead of
+/// a real card/row — this is the whole fix for "scrolling feels laggy":
+/// without it, every frame rebuilt and CPU-composited *every* thumbnail
+/// in the folder (this app renders via tiny-skia, no GPU), not just the
+/// ~20 actually on screen.
+const OVERSCAN_ROWS: usize = 2;
+
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     entries: &'a [FileEntry],
     selected: &'a HashSet<PathBuf>,
@@ -52,10 +62,12 @@ pub fn view<'a>(
     drop_hover: Option<&'a PathBuf>,
     zoom: u16,
     items_per_row_out: &'a std::cell::Cell<usize>,
+    scroll_offset: f32,
+    viewport_height: f32,
 ) -> Element<'a, Message> {
     let content: Element<Message> = match view_mode {
-        ViewMode::Grid => grid_view(entries, selected, cursor, available_width, suppress_hover, drop_hover, zoom, items_per_row_out),
-        ViewMode::List => list_view(entries, selected, cursor, sort_by, sort_asc, suppress_hover, drop_hover),
+        ViewMode::Grid => grid_view(entries, selected, cursor, available_width, suppress_hover, drop_hover, zoom, items_per_row_out, scroll_offset, viewport_height),
+        ViewMode::List => list_view(entries, selected, cursor, sort_by, sort_asc, suppress_hover, drop_hover, scroll_offset, viewport_height),
     };
 
     let area = mouse_area(
@@ -71,12 +83,18 @@ pub fn view<'a>(
         .id(scrollable::Id::new("filelist"))
         .width(Length::Fill)
         .height(Length::Fill)
+        .on_scroll(|vp| Message::Scrolled(vp.absolute_offset().y, vp.bounds().height))
         .into()
 }
 
 const CARD_SPACING: f32 = 8.0;
 const GRID_PADDING: f32 = 24.0; // matches the 12px padding on both sides in view()
 
+fn vspace(px: f32) -> Element<'static, Message> {
+    iced::widget::Space::with_height(Length::Fixed(px.max(0.0))).into()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn grid_view<'a>(
     entries: &'a [FileEntry],
     selected: &'a HashSet<PathBuf>,
@@ -86,6 +104,8 @@ fn grid_view<'a>(
     drop_hover: Option<&'a PathBuf>,
     zoom: u16,
     items_per_row_out: &'a std::cell::Cell<usize>,
+    scroll_offset: f32,
+    viewport_height: f32,
 ) -> Element<'a, Message> {
     if entries.is_empty() {
         return empty_message();
@@ -96,10 +116,25 @@ fn grid_view<'a>(
     let items_per_row = (((usable + CARD_SPACING) / (card_width + CARD_SPACING)) as usize).max(1);
     items_per_row_out.set(items_per_row);
 
-    let mut rows: Vec<Element<Message>> = Vec::new();
-    let mut chunks = entries.chunks(items_per_row).enumerate();
+    let row_height = zoom as f32 + 40.0 + CARD_SPACING;
+    let total_rows = entries.len().div_ceil(items_per_row);
 
-    while let Some((row_i, chunk)) = chunks.next() {
+    let first_row = ((scroll_offset / row_height).floor() as isize - OVERSCAN_ROWS as isize).max(0) as usize;
+    let visible_span = (viewport_height / row_height).ceil() as usize + 1;
+    let last_row = (first_row + visible_span + OVERSCAN_ROWS * 2).min(total_rows.saturating_sub(1));
+
+    let mut rows: Vec<Element<Message>> = Vec::new();
+    // Slop-tolerant: these two Space heights don't perfectly account for
+    // the column's own inter-row spacing at the seam (a few px either
+    // way), which only affects scrollbar-length accuracy by an amount
+    // nobody will notice — not which rows are actually rendered. Only
+    // pushed when non-zero so column.spacing() doesn't add a spurious gap
+    // at the very top/bottom when nothing's actually culled there.
+    if first_row > 0 {
+        rows.push(vspace(first_row as f32 * row_height));
+    }
+
+    for (row_i, chunk) in entries.chunks(items_per_row).enumerate().skip(first_row).take(last_row - first_row + 1) {
         let mut row_items = row![].spacing(8);
         for (col_i, entry) in chunk.iter().enumerate() {
             let idx = row_i * items_per_row + col_i;
@@ -116,6 +151,11 @@ fn grid_view<'a>(
             ));
         }
         rows.push(row_items.into());
+    }
+
+    let trailing_rows = total_rows.saturating_sub(last_row + 1);
+    if trailing_rows > 0 {
+        rows.push(vspace(trailing_rows as f32 * row_height));
     }
 
     column(rows).spacing(8).into()
@@ -199,6 +239,16 @@ fn sort_header_btn<'a>(label: &'a str, by: SortBy, width: Length, sort_by: SortB
     .into()
 }
 
+/// Fixed row height for list mode — `list_row`'s button has no explicit
+/// height (it sizes to its content), but virtualization needs a
+/// deterministic stride to compute which rows are on screen without
+/// laying out every row just to measure it. Matches what that content
+/// (18px icon/thumb, size-13 text, 8px spacing, no padding) actually
+/// renders at in practice.
+const LIST_ROW_HEIGHT: f32 = 30.0;
+const LIST_ROW_SPACING: f32 = 1.0;
+
+#[allow(clippy::too_many_arguments)]
 fn list_view<'a>(
     entries: &'a [FileEntry],
     selected: &'a HashSet<PathBuf>,
@@ -207,6 +257,8 @@ fn list_view<'a>(
     sort_asc: bool,
     suppress_hover: bool,
     drop_hover: Option<&'a PathBuf>,
+    scroll_offset: f32,
+    viewport_height: f32,
 ) -> Element<'a, Message> {
     let header = row![
         text("").width(30),
@@ -219,15 +271,31 @@ fn list_view<'a>(
     .padding([4, 8])
     .align_y(iced::Alignment::Center);
 
-    let mut col = column![header].spacing(1);
+    let mut col = column![header].spacing(LIST_ROW_SPACING);
 
     if entries.is_empty() {
         col = col.push(container(text("Empty folder").style(theme::muted_text)).padding([20, 8]));
+        return col.into();
     }
 
-    for (idx, entry) in entries.iter().enumerate() {
+    let row_stride = LIST_ROW_HEIGHT + LIST_ROW_SPACING;
+    // The header above isn't part of this stride math — a header's worth
+    // of slop is well inside the overscan buffer, not worth tracking
+    // separately.
+    let first = ((scroll_offset / row_stride).floor() as isize - OVERSCAN_ROWS as isize).max(0) as usize;
+    let visible_span = (viewport_height / row_stride).ceil() as usize + 1;
+    let last = (first + visible_span + OVERSCAN_ROWS * 2).min(entries.len().saturating_sub(1));
+
+    if first > 0 {
+        col = col.push(vspace(first as f32 * row_stride));
+    }
+    for (idx, entry) in entries.iter().enumerate().skip(first).take(last - first + 1) {
         let is_drop_target = entry.is_dir && drop_hover == Some(&entry.path);
         col = col.push(list_row(entry, idx, selected.contains(&entry.path), cursor == Some(idx), suppress_hover, is_drop_target));
+    }
+    let trailing = entries.len().saturating_sub(last + 1);
+    if trailing > 0 {
+        col = col.push(vspace(trailing as f32 * row_stride));
     }
 
     col.into()
