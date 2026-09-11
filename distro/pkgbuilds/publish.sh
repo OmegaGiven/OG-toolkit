@@ -32,7 +32,15 @@ if [ ! -d "$OGOS_REPO_CLONE/.git" ]; then
     exit 1
 fi
 
-PACKAGES=(og-settings og-apps og-bar og-clip og-files og-notif-center og-notify og-search og-links og-scripts)
+PACKAGES=(og-settings og-apps og-bar og-clip og-files og-notif-center og-notify og-search og-links og-scripts yay calamares)
+# yay/calamares are third-party AUR builds, not OG-toolkit monorepo apps —
+# they don't rsync from anywhere, their own PKGBUILD sources() pull
+# straight from GitHub release tarballs. Same build/repo-add/publish loop
+# works for them unmodified since nothing here is OG-toolkit-specific
+# beyond the rsync step each individual PKGBUILD already handles itself.
+# calamares in particular is a real C++/Qt6 build — expect this loop to
+# take significantly longer whenever it needs a rebuild (a new upstream
+# release, not just an OG-suite app change).
 
 echo "==> Building ${#PACKAGES[@]} packages"
 mkdir -p "$LOCAL_REPO" "$BAKED_REPO"
@@ -63,12 +71,12 @@ done
 
 echo "==> Baking into airootfs/root/ogos-repo (offline install path)"
 rm -f "$BAKED_REPO"/*.pkg.tar.zst "$BAKED_REPO"/*.db* "$BAKED_REPO"/*.files*
-cp "$LOCAL_REPO"/*.pkg.tar.zst "$LOCAL_REPO"/ogos.db.tar.gz "$LOCAL_REPO"/ogos.files.tar.gz "$BAKED_REPO/"
+cp "$LOCAL_REPO"/*.pkg.tar.zst "$LOCAL_REPO"/ogos.db.tar.gz "$LOCAL_REPO"/ogos.files.tar.gz "$LOCAL_REPO"/ogos.db "$LOCAL_REPO"/ogos.files "$BAKED_REPO/"
 
 echo "==> Publishing to $OGOS_REPO_CLONE (GitHub Pages, permanent update path)"
 mkdir -p "$OGOS_REPO_CLONE/x86_64"
 rm -f "$OGOS_REPO_CLONE"/x86_64/*.pkg.tar.zst "$OGOS_REPO_CLONE"/x86_64/*.db* "$OGOS_REPO_CLONE"/x86_64/*.files*
-cp "$LOCAL_REPO"/*.pkg.tar.zst "$LOCAL_REPO"/ogos.db.tar.gz "$LOCAL_REPO"/ogos.files.tar.gz "$OGOS_REPO_CLONE/x86_64/"
+cp "$LOCAL_REPO"/*.pkg.tar.zst "$LOCAL_REPO"/ogos.db.tar.gz "$LOCAL_REPO"/ogos.files.tar.gz "$LOCAL_REPO"/ogos.db "$LOCAL_REPO"/ogos.files "$OGOS_REPO_CLONE/x86_64/"
 touch "$OGOS_REPO_CLONE/.nojekyll"
 
 ( cd "$OGOS_REPO_CLONE" \
