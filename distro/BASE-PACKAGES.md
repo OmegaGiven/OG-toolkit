@@ -50,6 +50,30 @@ Runtime deps these actually need: `ttf-nerd-fonts-symbols` +
 this is the actual installed font providing them), `wl-clipboard`
 (og-clip shells out to it), `grim` `slurp` (screenshot pipeline).
 
+### General text fonts — real gap, found 2026-09-12
+
+**Nothing in this list, until now, ever specified a general-purpose UI
+font.** `ttf-nerd-fonts-symbols` above is icon glyphs only (a narrow,
+specific codepoint range for og-bar/og-search's own UI chrome) — it was
+never meant to, and can't, cover ordinary text. Confirmed live on the
+dev machine: `fc-match sans-serif` / `monospace` both fell through to
+`Nimbus Sans` / `Nimbus Mono PS` — Ghostscript's bundled PostScript-clone
+fonts, present only as a side effect of the `cups`/`ghostscript` printing
+group below, with Unicode coverage limited to roughly Latin-1. That's
+the actual cause of the "random tofu boxes in random apps" report: any
+character outside that narrow range — accented letters beyond the
+basics, typographic quotes/dashes, most symbols, all emoji — had
+literally no matching font anywhere on the system, in *any* app, not
+just the OG suite.
+
+`noto-fonts` `noto-fonts-emoji` `ttf-liberation` — Noto for broad
+general-script Unicode coverage (the closest thing to a "just works"
+default), Noto Color Emoji for actual emoji instead of tofu, Liberation
+as a metric-compatible fallback for documents/PDFs expecting
+Arial/Times/Courier. `noto-fonts-cjk` deliberately left out of base (it's
+large, and CJK text isn't a default-install assumption for this distro)
+— call this out as an easy optional group later if it comes up.
+
 ### Audio
 `pipewire-alsa` `pipewire-jack` `pipewire-pulse` `alsa-utils` `alsa-firmware` `sof-firmware`
 

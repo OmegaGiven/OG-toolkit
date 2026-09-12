@@ -241,6 +241,7 @@ pacstrap -K -C "$INSTALL_PACMAN_CONF" /mnt \
     og-bar og-settings og-search og-clip og-notif-center og-notify og-files \
     og-links og-apps og-scripts \
     ttf-nerd-fonts-symbols ttf-nerd-fonts-symbols-common wl-clipboard grim slurp \
+    noto-fonts noto-fonts-emoji ttf-liberation \
     alacritty mako \
     pipewire-alsa pipewire-jack pipewire-pulse alsa-utils alsa-firmware sof-firmware \
     bluez bluez-utils iwd wireless_tools openssh tailscale wireguard-tools \

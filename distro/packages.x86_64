@@ -75,6 +75,15 @@ og-scripts
 mako
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
+# General-purpose UI/text fonts — ttf-nerd-fonts-symbols above is icon
+# glyphs only, never covered ordinary text. Without these, fontconfig's
+# only fallback is Ghostscript's bundled Nimbus fonts (a side effect of
+# the cups/ghostscript printing group, Latin-1-ish coverage only) —
+# confirmed live as the cause of random tofu boxes across every app,
+# not an OG-suite-specific bug. See BASE-PACKAGES.md's 2026-09-12 entry.
+noto-fonts
+noto-fonts-emoji
+ttf-liberation
 wl-clipboard
 grim
 slurp
