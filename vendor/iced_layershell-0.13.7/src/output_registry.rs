@@ -54,7 +54,12 @@ pub(crate) fn iced_id_for(raw: RawId) -> Option<IcedId> {
 }
 
 pub(crate) fn remove(iced_id: IcedId) {
-    state().lock().unwrap().aliases.remove(&iced_id);
+    let mut state = state().lock().unwrap();
+    // Drop the surface's name too — otherwise every surface ever created
+    // (one per output per DPMS wake/hotplug) leaves its entry behind.
+    if let Some(raw) = state.aliases.remove(&iced_id) {
+        state.names.remove(&raw);
+    }
 }
 
 /// The compositor's output name (e.g. "DP-3") a surface is on, if known.

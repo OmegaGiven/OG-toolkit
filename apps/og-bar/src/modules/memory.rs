@@ -2,7 +2,7 @@ use iced::widget::container;
 use iced::{Color, Element, Length, Subscription};
 
 use crate::message::Message;
-use crate::module::{label_value, Module, Orientation};
+use crate::module::{label_value, poll_changes, Module, Orientation};
 use og_theme::AppColors;
 
 const WARNING_PCT: f32 = 75.0;
@@ -57,14 +57,17 @@ impl Module for Memory {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(5)).map(|_| Message::Tick)
+        poll_changes(
+            "memory",
+            std::time::Duration::from_secs(5),
+            || read_mem_pct().map(|pct| pct.round() as u32),
+            |pct| Message::MemoryUsage(pct.unwrap_or(0)),
+        )
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick = message {
-            if let Some(pct) = read_mem_pct() {
-                self.usage_pct = pct;
-            }
+        if let Message::MemoryUsage(pct) = message {
+            self.usage_pct = *pct as f32;
         }
     }
 }

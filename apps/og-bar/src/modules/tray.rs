@@ -22,12 +22,15 @@ use crate::message::Message;
 use crate::module::{Module, Orientation};
 use og_theme::AppColors;
 
+/// Icons carry a ready-made `image::Handle`, built once per tray update
+/// rather than in `view()`: every new Handle gets a fresh id, so building
+/// them per frame meant the renderer re-decoded every icon on every redraw
+/// and never hit its raster cache.
 #[derive(Debug, Clone)]
 pub enum TrayIcon {
-    Rgba { width: u32, height: u32, pixels: Vec<u8> },
-    /// Loaded from an icon theme file (PNG bytes, passed straight to
-    /// iced::widget::image which sniffs the format).
-    File(Vec<u8>),
+    /// From the item's own ARGB pixmap, or from an icon theme file (PNG
+    /// bytes; iced::widget::image sniffs the format).
+    Image(image::Handle),
     /// Nothing usable was found — fall back to a generic glyph rather than
     /// showing nothing at all.
     Glyph,
@@ -98,7 +101,7 @@ fn pixmap_to_icon(pixmaps: &[IconPixmap]) -> Option<TrayIcon> {
         let [a, r, g, b] = [chunk[0], chunk[1], chunk[2], chunk[3]];
         rgba.extend_from_slice(&[r, g, b, a]);
     }
-    Some(TrayIcon::Rgba { width: biggest.width as u32, height: biggest.height as u32, pixels: rgba })
+    Some(TrayIcon::Image(image::Handle::from_rgba(biggest.width as u32, biggest.height as u32, rgba)))
 }
 
 /// Shallow (2-level) search for `{icon_name}.png` under a directory —
@@ -127,23 +130,41 @@ fn find_icon_file(root: &std::path::Path, icon_name: &str, depth: u32) -> Option
     None
 }
 
-fn resolve_icon(icon_name: Option<&str>, icon_theme_path: Option<&str>, pixmaps: Option<&[IconPixmap]>) -> TrayIcon {
+/// Theme-file lookups keyed by (icon name, theme path). The directory walk
+/// in `find_icon_file` is far too slow to repeat on every tray event (apps
+/// like Steam/Discord emit them constantly), and the answer never changes
+/// for a given name. Caching the Handle also keeps its id stable, so the
+/// renderer's image cache keeps hitting across updates.
+type IconFileCache = std::collections::HashMap<(String, Option<String>), TrayIcon>;
+
+fn resolve_icon(
+    icon_name: Option<&str>,
+    icon_theme_path: Option<&str>,
+    pixmaps: Option<&[IconPixmap]>,
+    file_cache: &mut IconFileCache,
+) -> TrayIcon {
     if let Some(pixmaps) = pixmaps {
         if let Some(icon) = pixmap_to_icon(pixmaps) {
             return icon;
         }
     }
-    if let Some(name) = icon_name {
-        let search_roots: Vec<std::path::PathBuf> = icon_theme_path
-            .map(std::path::PathBuf::from)
-            .into_iter()
-            .chain(["/usr/share/icons/hicolor", "/usr/share/pixmaps"].map(std::path::PathBuf::from))
-            .collect();
-        for root in search_roots {
-            if let Some(path) = find_icon_file(&root, name, 3) {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    return TrayIcon::File(bytes);
-                }
+    let Some(name) = icon_name else { return TrayIcon::Glyph };
+    file_cache
+        .entry((name.to_string(), icon_theme_path.map(str::to_string)))
+        .or_insert_with(|| lookup_icon_file(name, icon_theme_path))
+        .clone()
+}
+
+fn lookup_icon_file(name: &str, icon_theme_path: Option<&str>) -> TrayIcon {
+    let search_roots: Vec<std::path::PathBuf> = icon_theme_path
+        .map(std::path::PathBuf::from)
+        .into_iter()
+        .chain(["/usr/share/icons/hicolor", "/usr/share/pixmaps"].map(std::path::PathBuf::from))
+        .collect();
+    for root in search_roots {
+        if let Some(path) = find_icon_file(&root, name, 3) {
+            if let Ok(bytes) = std::fs::read(&path) {
+                return TrayIcon::Image(image::Handle::from_bytes(bytes));
             }
         }
     }
@@ -154,12 +175,17 @@ fn resolve_icon(icon_name: Option<&str>, icon_theme_path: Option<&str>, pixmaps:
 /// item map — no dbus I/O here. The map key is the item's DBus bus address
 /// (e.g. ":1.370"), needed for Activate; `item.id` is a separate, app-
 /// chosen SNI id (e.g. "steam") that isn't usable for that.
-fn snapshot_items(items: &system_tray::data::BaseMap) -> Vec<TrayItem> {
+fn snapshot_items(items: &system_tray::data::BaseMap, file_cache: &mut IconFileCache) -> Vec<TrayItem> {
     items
         .iter()
         .map(|(address, (item, menu))| TrayItem {
             address: address.clone(),
-            icon: resolve_icon(item.icon_name.as_deref(), item.icon_theme_path.as_deref(), item.icon_pixmap.as_deref()),
+            icon: resolve_icon(
+                item.icon_name.as_deref(),
+                item.icon_theme_path.as_deref(),
+                item.icon_pixmap.as_deref(),
+                file_cache,
+            ),
             menu_path: item.menu.clone(),
             menu: menu.clone(),
         })
@@ -212,10 +238,7 @@ impl Module for Tray {
             .into_iter()
             .map(|item| {
                 let content: Element<Message> = match &item.icon {
-                    TrayIcon::Rgba { width, height, pixels } => {
-                        image(image::Handle::from_rgba(*width, *height, pixels.clone())).width(16).height(16).into()
-                    }
-                    TrayIcon::File(bytes) => image(image::Handle::from_bytes(bytes.clone())).width(16).height(16).into(),
+                    TrayIcon::Image(handle) => image(handle.clone()).width(16).height(16).into(),
                     TrayIcon::Glyph => {
                         let fg = colors.text;
                         text("\u{f2d0}").size(14).font(icon_font::nerd_font()).style(move |_| text::Style { color: Some(fg) }).into()
@@ -315,13 +338,25 @@ impl Module for Tray {
     }
 }
 
+/// One tray client for the whole process. `Client::new()` opens its own
+/// D-Bus connection, registers a new StatusNotifierHost and spawns
+/// background tasks that are *not* stopped when the Client is dropped — so
+/// the old per-click `Client::new()` in activate()/activate_menu_item()
+/// leaked a live connection + tasks on every tray click.
+static CLIENT: tokio::sync::OnceCell<Client> = tokio::sync::OnceCell::const_new();
+
+async fn client() -> Option<&'static Client> {
+    CLIENT.get_or_try_init(Client::new).await.ok()
+}
+
 fn tray_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(16, |mut sender| async move {
         use iced::futures::SinkExt;
 
-        let Ok(client) = Client::new().await else { return };
+        let Some(client) = client().await else { return };
         let mut rx = client.subscribe();
         let items = client.items();
+        let mut file_cache = IconFileCache::new();
 
         // Real bug found while testing this: creating a *second* fresh
         // Client (with its own short sleep-then-read) on every fetch,
@@ -331,7 +366,7 @@ fn tray_stream() -> impl iced::futures::Stream<Item = Message> {
         // Reading straight from this client's own `items()` handle avoids
         // that: it only ever reflects events *this* connection actually
         // received.
-        let snapshot = { snapshot_items(&items.lock().unwrap()) };
+        let snapshot = { snapshot_items(&items.lock().unwrap(), &mut file_cache) };
         let _ = sender.send(Message::TrayUpdated(snapshot)).await;
 
         // `broadcast::Receiver::recv()` returns `Err(Lagged(n))` when this
@@ -348,11 +383,11 @@ fn tray_stream() -> impl iced::futures::Stream<Item = Message> {
         loop {
             match rx.recv().await {
                 Ok(_) => {
-                    let snapshot = { snapshot_items(&items.lock().unwrap()) };
+                    let snapshot = { snapshot_items(&items.lock().unwrap(), &mut file_cache) };
                     let _ = sender.send(Message::TrayUpdated(snapshot)).await;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    let snapshot = { snapshot_items(&items.lock().unwrap()) };
+                    let snapshot = { snapshot_items(&items.lock().unwrap(), &mut file_cache) };
                     let _ = sender.send(Message::TrayUpdated(snapshot)).await;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -362,13 +397,13 @@ fn tray_stream() -> impl iced::futures::Stream<Item = Message> {
 }
 
 pub async fn activate(address: String) {
-    if let Ok(client) = Client::new().await {
+    if let Some(client) = client().await {
         let _ = client.activate(ActivateRequest::Default { address, x: 0, y: 0 }).await;
     }
 }
 
 pub async fn activate_menu_item(address: String, menu_path: String, submenu_id: i32) {
-    if let Ok(client) = Client::new().await {
+    if let Some(client) = client().await {
         let _ = client.activate(ActivateRequest::MenuItem { address, menu_path, submenu_id }).await;
     }
 }

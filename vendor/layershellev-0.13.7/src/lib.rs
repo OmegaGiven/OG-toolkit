@@ -2128,6 +2128,18 @@ impl<T: 'static> WindowState<T> {
 
         let events: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(Vec::new()));
 
+        // Wakes the event loop when the forwarding thread below queues a
+        // message. Stock code had no wake-up at all and instead polled
+        // `events` by dispatching with a 1 ms timeout — ~1000 loop turns a
+        // second forever, each one also driving iced's NormalUpdate. With
+        // the ping, the loop sleeps until Wayland or a message needs it.
+        let (wake_ping, wake_source) =
+            calloop::ping::make_ping().expect("Failed to create wake ping");
+        event_loop
+            .handle()
+            .insert_source(wake_source, |_, _, _| {})
+            .expect("Failed to insert wake ping");
+
         let to_exit2 = to_exit.clone();
         let events_2 = events.clone();
         let thread = std::thread::spawn(move || {
@@ -2142,10 +2154,13 @@ impl<T: 'static> WindowState<T> {
                 }
                 let mut events_local = events.lock().unwrap();
                 events_local.push(message);
+                drop(events_local);
+                wake_ping.ping();
             }
         });
         'out: loop {
-            event_loop.dispatch(Duration::from_millis(1), &mut self)?;
+            // Long fallback only; real wake-ups come from Wayland or wake_ping.
+            event_loop.dispatch(Duration::from_millis(1000), &mut self)?;
 
             let mut messages = Vec::new();
             std::mem::swap(&mut messages, &mut self.message);

@@ -108,6 +108,34 @@ impl Module for Clock {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick)
+        // Same id for every Clock instance -> one shared timer.
+        Subscription::run_with_id("clock-minute", minute_stream())
     }
+}
+
+/// Fires once per wall-clock minute, right after it turns over — the clock
+/// has no seconds field, so a 1 s tick was 59 wasted redraws a minute.
+/// Sleeps are capped at 5 s because tokio's timer is monotonic and doesn't
+/// advance across suspend; the cap bounds how stale the clock can be after
+/// resume without adding redraws (nothing is sent until the minute changes).
+fn minute_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(1, |mut sender| async move {
+        use iced::futures::SinkExt;
+
+        let minute = || chrono::Utc::now().timestamp().div_euclid(60);
+        let mut last = minute();
+        loop {
+            let now = chrono::Utc::now();
+            let into_minute_ms = (now.timestamp().rem_euclid(60) * 1000) as u64 + now.timestamp_subsec_millis() as u64;
+            let until_next_ms = 60_000 - into_minute_ms + 20;
+            tokio::time::sleep(std::time::Duration::from_millis(until_next_ms.min(5_000))).await;
+            let current = minute();
+            if current != last {
+                last = current;
+                if sender.send(Message::ClockMinute).await.is_err() {
+                    return;
+                }
+            }
+        }
+    })
 }

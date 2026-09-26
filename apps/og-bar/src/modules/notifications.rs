@@ -36,7 +36,7 @@ pub struct Notifications {
 
 impl Notifications {
     pub fn new() -> Self {
-        Self { count: unread_count() }
+        Self { count: 0 }
     }
 }
 
@@ -87,12 +87,96 @@ impl Module for Notifications {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(5)).map(|_| Message::Tick)
+        Subscription::run_with_id("notifications", notifications_stream())
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick = message {
-            self.count = unread_count();
+        if let Message::NotificationCount(count) = message {
+            self.count = *count;
         }
     }
+}
+
+/// Event-driven instead of polling makoctl every 5 s. The count only
+/// changes when:
+/// - mako moves a notification into history — it broadcasts
+///   `NotificationClosed` on the session bus (expired or dismissed);
+/// - mako restarts (history is lost) — `NameOwnerChanged`;
+/// - og-notif-center hides/clears entries — it rewrites the hidden-ids
+///   file, watched with inotify.
+/// `makoctl history -j` is still what gets counted, since its exact JSON is
+/// the hidden-file contract shared with og-notif-center.
+fn notifications_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(4, |mut sender| async move {
+        use iced::futures::stream::{self, BoxStream, StreamExt};
+        use iced::futures::SinkExt;
+        use zbus::message::Type;
+        use zbus::{MatchRule, MessageStream};
+
+        const NOTIFICATIONS: &str = "org.freedesktop.Notifications";
+        let mut sources: Vec<BoxStream<'static, ()>> = Vec::new();
+
+        if let Ok(conn) = zbus::Connection::session().await {
+            let rules = [
+                MatchRule::builder()
+                    .msg_type(Type::Signal)
+                    .interface(NOTIFICATIONS)
+                    .and_then(|b| b.member("NotificationClosed"))
+                    .map(|b| b.build()),
+                MatchRule::builder()
+                    .msg_type(Type::Signal)
+                    .sender("org.freedesktop.DBus")
+                    .and_then(|b| b.member("NameOwnerChanged"))
+                    .and_then(|b| b.arg(0, NOTIFICATIONS))
+                    .map(|b| b.build()),
+            ];
+            for rule in rules.into_iter().flatten() {
+                if let Ok(signals) = MessageStream::for_match_rule(rule, &conn, Some(16)).await {
+                    sources.push(signals.map(|_| ()).boxed());
+                }
+            }
+        }
+
+        // Watch the directory, not the file: it may not exist yet, and a
+        // file watch dies if it's ever replaced rather than rewritten.
+        let home = std::env::var("HOME").unwrap_or_default();
+        if let Ok(inotify) = inotify::Inotify::init() {
+            use inotify::WatchMask;
+            let dir = format!("{home}/.local/share");
+            let mask = WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::DELETE;
+            if inotify.watches().add(&dir, mask).is_ok() {
+                if let Ok(events) = inotify.into_event_stream([0u8; 4096]) {
+                    let hidden_file = std::ffi::OsStr::new("notification-hidden.json");
+                    sources.push(
+                        events
+                            .filter_map(move |event| {
+                                let hit = matches!(&event, Ok(e) if e.name.as_deref() == Some(hidden_file));
+                                std::future::ready(hit.then_some(()))
+                            })
+                            .boxed(),
+                    );
+                }
+            }
+        }
+
+        let mut events = stream::select_all(sources);
+        let mut last = None;
+        loop {
+            if let Ok(count) = tokio::task::spawn_blocking(unread_count).await {
+                if last != Some(count) {
+                    last = Some(count);
+                    if sender.send(Message::NotificationCount(count)).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            if events.next().await.is_none() {
+                return;
+            }
+            // Coalesce bursts ("dismiss all" closes every notification at
+            // once, one signal each) into a single re-read.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            while let Some(Some(())) = iced::futures::FutureExt::now_or_never(events.next()) {}
+        }
+    })
 }

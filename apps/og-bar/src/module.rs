@@ -31,6 +31,49 @@ pub fn label_value<'a>(label: &'a str, value: String, color: Color, size: u32, o
     }
 }
 
+/// Samples `read` every `every` on a blocking thread (it may shell out) and
+/// emits a message only when the sampled value differs from the last one.
+/// Every message rebuilds and redraws the whole bar, so an unchanged
+/// reading must produce no message at all — this is what keeps an idle bar
+/// idle. `read` owns any state it needs between samples (e.g. CPU deltas).
+pub fn poll_changes<T, F>(
+    id: &'static str,
+    every: std::time::Duration,
+    read: F,
+    to_message: fn(T) -> Message,
+) -> Subscription<Message>
+where
+    T: PartialEq + Clone + Send + 'static,
+    F: FnMut() -> T + Send + 'static,
+{
+    Subscription::run_with_id(
+        id,
+        iced::stream::channel(1, move |mut sender| async move {
+            use iced::futures::SinkExt;
+            let mut read = read;
+            let mut last: Option<T> = None;
+            loop {
+                let Ok((returned, value)) = tokio::task::spawn_blocking(move || {
+                    let value = read();
+                    (read, value)
+                })
+                .await
+                else {
+                    return;
+                };
+                read = returned;
+                if last.as_ref() != Some(&value) {
+                    last = Some(value.clone());
+                    if sender.send(to_message(value)).await.is_err() {
+                        return;
+                    }
+                }
+                tokio::time::sleep(every).await;
+            }
+        }),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orientation {
     Horizontal,

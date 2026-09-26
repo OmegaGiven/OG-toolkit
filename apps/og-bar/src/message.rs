@@ -27,7 +27,19 @@ pub enum Message {
     TrayContextMenu(String, String, Vec<TrayMenuEntry>),
     TrayMenuItemActivate(String, String, i32),
     TrayHover(String, bool),
-    Tick,
+    /// Result of a fire-and-forget task; carries nothing to update.
+    Noop,
+    // Per-module readings. Each module's subscription only emits these when
+    // the displayed value actually changed (see module::poll_changes), so a
+    // quiet system produces no messages -> no rebuild/redraw.
+    CpuUsage(u32),
+    MemoryUsage(u32),
+    GpuUsage(Option<crate::modules::gpu::GpuSample>),
+    NotificationCount(u32),
+    PulseaudioState(u32, bool),
+    BluetoothPowered(bool),
+    NetworkLink(crate::modules::network::LinkState),
+    ClockMinute,
     /// Periodic liveness ping for systemd's watchdog (see `watchdog.rs`).
     WatchdogPing,
     Launch(String),

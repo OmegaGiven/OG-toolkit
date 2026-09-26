@@ -1,8 +1,8 @@
 //! Reads link state straight out of /sys/class/net rather than shelling to
 //! nmcli/iwctl — those manage connections, this module only needs to know
 //! "up, and is it wifi or ethernet", which sysfs already has for free.
-//! SSID lookup (`iw dev <if> link`) is the one place this still shells out,
-//! since sysfs has no ESSID attribute.
+//! Re-read only when the kernel reports a link change over rtnetlink (see
+//! `network_stream`), so an unchanged network costs nothing.
 
 use iced::widget::{container, mouse_area, text};
 use iced::{Background, Border, Color, Element, Length, Subscription};
@@ -23,13 +23,15 @@ pub fn is_wifi_powered() -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum LinkState {
-    Wifi(String),
+pub enum LinkState {
+    // No SSID: only the icon is shown, and looking it up meant spawning
+    // `iw` on every refresh.
+    Wifi,
     Ethernet,
     Disconnected,
 }
 
-fn detect_link() -> LinkState {
+pub fn detect_link() -> LinkState {
     let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
         return LinkState::Disconnected;
     };
@@ -50,19 +52,8 @@ fn detect_link() -> LinkState {
         if state.trim() != "up" {
             continue;
         }
-        let is_wifi = entry.path().join("wireless").exists();
-        if is_wifi {
-            let essid = std::process::Command::new("iw")
-                .args(["dev", &name, "link"])
-                .output()
-                .ok()
-                .and_then(|out| String::from_utf8(out.stdout).ok())
-                .and_then(|s| {
-                    s.lines()
-                        .find_map(|l| l.trim().strip_prefix("SSID: ").map(str::to_string))
-                })
-                .unwrap_or_else(|| "connected".to_string());
-            return LinkState::Wifi(essid);
+        if entry.path().join("wireless").exists() {
+            return LinkState::Wifi;
         }
         return LinkState::Ethernet;
     }
@@ -76,7 +67,7 @@ pub struct Network {
 
 impl Network {
     pub fn new() -> Self {
-        Self { state: detect_link(), hovered: false }
+        Self { state: LinkState::Disconnected, hovered: false }
     }
 }
 
@@ -85,7 +76,7 @@ impl Module for Network {
         let fg = colors.text;
         let hovered = self.hovered;
         let icon = match &self.state {
-            LinkState::Wifi(_) => "\u{f05a9}",
+            LinkState::Wifi => "\u{f05a9}",
             LinkState::Ethernet => "\u{f0200}",
             LinkState::Disconnected => "\u{f05aa}",
         };
@@ -111,15 +102,97 @@ impl Module for Network {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(10)).map(|_| Message::Tick)
+        Subscription::run_with_id("network", network_stream())
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick | Message::WifiTogglePower = message {
-            self.state = detect_link();
+        if let Message::NetworkLink(state) = message {
+            self.state = state.clone();
         }
         if let Message::NetworkHover(v) = message {
             self.hovered = *v;
         }
     }
+}
+
+/// A NETLINK_ROUTE socket subscribed to RTMGRP_LINK: the kernel pushes a
+/// message whenever any interface is added/removed or changes state
+/// (cable, wifi association, rfkill, suspend/resume).
+fn link_event_socket() -> Option<std::os::fd::OwnedFd> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    // SAFETY: plain socket/bind syscalls; the fd is owned immediately and
+    // `addr` is a zeroed sockaddr_nl with only family/groups set.
+    unsafe {
+        let fd = libc::socket(
+            libc::AF_NETLINK,
+            libc::SOCK_RAW | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
+            libc::NETLINK_ROUTE,
+        );
+        if fd < 0 {
+            return None;
+        }
+        let fd = OwnedFd::from_raw_fd(fd);
+        let mut addr: libc::sockaddr_nl = std::mem::zeroed();
+        addr.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+        addr.nl_groups = libc::RTMGRP_LINK as u32;
+        let bound = libc::bind(
+            std::os::fd::AsRawFd::as_raw_fd(&fd),
+            &addr as *const libc::sockaddr_nl as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
+        );
+        (bound == 0).then_some(fd)
+    }
+}
+
+/// Discards everything queued on the socket. The messages' contents don't
+/// matter — any link event just means "re-read sysfs" — and an overrun
+/// (ENOBUFS) means the same thing.
+fn drain(fd: &std::os::fd::OwnedFd) {
+    let mut buf = [0u8; 8192];
+    loop {
+        // SAFETY: recv into a local buffer of the stated length.
+        let n = unsafe {
+            libc::recv(
+                std::os::fd::AsRawFd::as_raw_fd(fd),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                libc::MSG_DONTWAIT,
+            )
+        };
+        let overrun = n < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOBUFS);
+        if n <= 0 && !overrun {
+            return;
+        }
+    }
+}
+
+fn network_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(1, |mut sender| async move {
+        use iced::futures::SinkExt;
+
+        let socket = link_event_socket().and_then(|fd| tokio::io::unix::AsyncFd::new(fd).ok());
+        let mut last = None;
+        loop {
+            if let Ok(state) = tokio::task::spawn_blocking(detect_link).await {
+                if last.as_ref() != Some(&state) {
+                    last = Some(state.clone());
+                    if sender.send(Message::NetworkLink(state)).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            match &socket {
+                Some(socket) => {
+                    let Ok(mut guard) = socket.readable().await else { return };
+                    // Link changes arrive in bursts (an interface going up
+                    // emits several); settle briefly, then take them all.
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    drain(socket.get_ref());
+                    guard.clear_ready();
+                }
+                // No netlink (shouldn't happen on Linux): fall back to polling.
+                None => tokio::time::sleep(std::time::Duration::from_secs(10)).await,
+            }
+        }
+    })
 }

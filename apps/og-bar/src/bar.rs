@@ -197,7 +197,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                     .arg(format!("workspace {name}"))
                     .output()
                     .await;
-                Message::Tick
+                Message::Noop
             });
         }
         Message::WindowDragStart(con_id, origin_ws, icon) => {
@@ -215,7 +215,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                     .arg(format!("[con_id={con_id}] focus"))
                     .output()
                     .await;
-                Message::Tick
+                Message::Noop
             });
         }
         Message::WorkspaceGroupHovered(ws_num) => {
@@ -237,7 +237,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                                 .arg(format!("[con_id={con_id}] move to workspace number {target_ws}"))
                                 .output()
                                 .await;
-                            Message::Tick
+                            Message::Noop
                         });
                     }
                 }
@@ -248,7 +248,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             let address = address.clone();
             return Task::future(async move {
                 crate::modules::tray::activate(address).await;
-                Message::Tick
+                Message::Noop
             });
         }
         Message::TrayContextMenu(address, menu_path, entries) => {
@@ -272,7 +272,7 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 let close = Task::done(Message::RemoveWindow(popup.id));
                 let fire = Task::future(async move {
                     crate::modules::tray::activate_menu_item(address, menu_path, submenu_id).await;
-                    Message::Tick
+                    Message::Noop
                 });
                 return Task::batch([close, fire]);
             }
@@ -292,22 +292,37 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
                 .arg(format!("PATH=\"{home}/.local/bin:$PATH\" setsid {cmd} >/dev/null 2>&1 &"))
                 .spawn();
         }
+        // Toggles run off the UI thread. Pulseaudio and bluetooth need no
+        // reply (their event streams see the change); wifi reports the
+        // resulting link state straight back.
         Message::PulseaudioToggleMute => {
-            // Blocking (not spawn+detach like Launch) so the module's own
-            // update() below re-reads mute/volume state only after pactl
-            // has actually finished flipping it — otherwise the icon
-            // would still show the pre-toggle state for up to one Tick.
-            let _ = std::process::Command::new("pactl")
-                .args(["set-sink-mute", "@DEFAULT_SINK@", "toggle"])
-                .output();
+            return Task::future(async {
+                let _ = tokio::process::Command::new("pactl")
+                    .args(["set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+                    .output()
+                    .await;
+                Message::Noop
+            });
         }
+        // Bluetooth needs no reply either: BlueZ's PropertiesChanged
+        // signal reaches the module's D-Bus stream.
         Message::BluetoothTogglePower => {
-            let on = if crate::modules::bluetooth::is_powered() { "off" } else { "on" };
-            let _ = std::process::Command::new("bluetoothctl").args(["power", on]).output();
+            return Task::future(async {
+                crate::modules::bluetooth::toggle_powered().await;
+                Message::Noop
+            });
         }
         Message::WifiTogglePower => {
-            let action = if crate::modules::network::is_wifi_powered() { "block" } else { "unblock" };
-            let _ = std::process::Command::new("rfkill").args([action, "wifi"]).output();
+            return Task::future(async {
+                let link = tokio::task::spawn_blocking(|| {
+                    let action = if crate::modules::network::is_wifi_powered() { "block" } else { "unblock" };
+                    let _ = std::process::Command::new("rfkill").args([action, "wifi"]).output();
+                    crate::modules::network::detect_link()
+                })
+                .await
+                .unwrap_or(crate::modules::network::LinkState::Disconnected);
+                Message::NetworkLink(link)
+            });
         }
         Message::OpenBluetoothMenu => {
             let id = iced::window::Id::unique();
@@ -322,10 +337,26 @@ pub fn update(bar: &mut Bar, message: Message) -> Task<Message> {
             });
         }
         Message::BluetoothAction(action) => {
-            action.run();
+            use crate::modules::bluetooth::BluetoothAction;
+            let power = match action {
+                BluetoothAction::PowerOn => Some(true),
+                BluetoothAction::PowerOff => Some(false),
+                _ => None,
+            };
+            let set_power = match power {
+                Some(on) => Task::future(async move {
+                    crate::modules::bluetooth::set_powered(on).await;
+                    Message::Noop
+                }),
+                None => {
+                    action.run();
+                    Task::none()
+                }
+            };
             if let Some(popup) = bar.popup.take() {
-                return Task::done(Message::RemoveWindow(popup.id));
+                return Task::batch([set_power, Task::done(Message::RemoveWindow(popup.id))]);
             }
+            return set_power;
         }
         Message::OpenPowerMenu => {
             let id = iced::window::Id::unique();

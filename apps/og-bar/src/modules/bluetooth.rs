@@ -31,14 +31,11 @@ impl BluetoothAction {
         }
     }
 
+    /// Power on/off go over D-Bus asynchronously (bar.rs turns them into
+    /// `set_powered` tasks); only the blueman launchers run here.
     pub fn run(&self) {
         match self {
-            BluetoothAction::PowerOn => {
-                let _ = std::process::Command::new("bluetoothctl").args(["power", "on"]).output();
-            }
-            BluetoothAction::PowerOff => {
-                let _ = std::process::Command::new("bluetoothctl").args(["power", "off"]).output();
-            }
+            BluetoothAction::PowerOn | BluetoothAction::PowerOff => {}
             BluetoothAction::Devices => {
                 let _ = std::process::Command::new("blueman-manager").spawn();
             }
@@ -52,14 +49,125 @@ impl BluetoothAction {
     }
 }
 
-pub fn is_powered() -> bool {
-    std::process::Command::new("bluetoothctl")
-        .arg("show")
-        .output()
-        .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .map(|s| s.lines().any(|l| l.trim() == "Powered: yes"))
-        .unwrap_or(false)
+const BLUEZ: &str = "org.bluez";
+const ADAPTER_IFACE: &str = "org.bluez.Adapter1";
+
+/// One system-bus connection shared by the event stream and the toggles.
+async fn system_bus() -> Option<&'static zbus::Connection> {
+    static BUS: tokio::sync::OnceCell<zbus::Connection> = tokio::sync::OnceCell::const_new();
+    BUS.get_or_try_init(zbus::Connection::system).await.ok()
+}
+
+/// Object path and `Powered` state of the first BlueZ adapter, from a
+/// single ObjectManager call — no `bluetoothctl` process.
+async fn adapter(conn: &zbus::Connection) -> Option<(zbus::zvariant::OwnedObjectPath, bool)> {
+    let manager = zbus::fdo::ObjectManagerProxy::builder(conn)
+        .destination(BLUEZ)
+        .ok()?
+        .path("/")
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    let objects = manager.get_managed_objects().await.ok()?;
+    objects.into_iter().find_map(|(path, interfaces)| {
+        let (_, props) = interfaces.into_iter().find(|(name, _)| name.as_str() == ADAPTER_IFACE)?;
+        let powered = props.get("Powered").and_then(|v| bool::try_from(v).ok()).unwrap_or(false);
+        Some((path, powered))
+    })
+}
+
+pub async fn set_powered(on: bool) {
+    let Some(conn) = system_bus().await else { return };
+    let Some((path, _)) = adapter(conn).await else { return };
+    let Ok(builder) = zbus::fdo::PropertiesProxy::builder(conn).destination(BLUEZ).and_then(|b| b.path(path)) else {
+        return;
+    };
+    if let Ok(props) = builder.build().await {
+        let iface = zbus::names::InterfaceName::from_static_str_unchecked(ADAPTER_IFACE);
+        let _ = props.set(iface, "Powered", on.into()).await;
+    }
+}
+
+pub async fn toggle_powered() {
+    let Some(conn) = system_bus().await else { return };
+    if let Some((_, powered)) = adapter(conn).await {
+        set_powered(!powered).await;
+    }
+}
+
+/// True for signals that can change what this module shows: the adapter's
+/// own properties, an adapter (not a device) appearing/disappearing, or
+/// bluetoothd itself restarting. Device churn during a scan is ignored.
+fn affects_adapter(msg: &zbus::Message) -> bool {
+    let header = msg.header();
+    match header.member().map(|m| m.as_str()) {
+        Some("InterfacesAdded" | "InterfacesRemoved") => msg
+            .body()
+            .deserialize::<(zbus::zvariant::ObjectPath<'_>, zbus::zvariant::Value<'_>)>()
+            .map(|(path, _)| !path.as_str().contains("/dev_"))
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
+/// Event-driven: BlueZ signals over the system bus instead of polling
+/// `bluetoothctl show`. The adapter is re-read only when one of the
+/// matched signals says something relevant changed.
+fn bluetooth_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(4, |mut sender| async move {
+        use iced::futures::{SinkExt, StreamExt};
+        use zbus::message::Type;
+        use zbus::{MatchRule, MessageStream};
+
+        let Some(conn) = system_bus().await else { return };
+
+        let rules = [
+            MatchRule::builder()
+                .msg_type(Type::Signal)
+                .sender(BLUEZ)
+                .and_then(|b| b.interface("org.freedesktop.DBus.Properties"))
+                .and_then(|b| b.member("PropertiesChanged"))
+                .and_then(|b| b.arg(0, ADAPTER_IFACE))
+                .map(|b| b.build()),
+            MatchRule::builder()
+                .msg_type(Type::Signal)
+                .sender(BLUEZ)
+                .and_then(|b| b.interface("org.freedesktop.DBus.ObjectManager"))
+                .map(|b| b.build()),
+            MatchRule::builder()
+                .msg_type(Type::Signal)
+                .sender("org.freedesktop.DBus")
+                .and_then(|b| b.member("NameOwnerChanged"))
+                .and_then(|b| b.arg(0, BLUEZ))
+                .map(|b| b.build()),
+        ];
+        let mut streams = Vec::new();
+        for rule in rules.into_iter().flatten() {
+            if let Ok(stream) = MessageStream::for_match_rule(rule, conn, Some(16)).await {
+                streams.push(stream);
+            }
+        }
+        let mut events = iced::futures::stream::select_all(streams);
+
+        let mut last = None;
+        loop {
+            let powered = adapter(conn).await.is_some_and(|(_, powered)| powered);
+            if last != Some(powered) {
+                last = Some(powered);
+                if sender.send(Message::BluetoothPowered(powered)).await.is_err() {
+                    return;
+                }
+            }
+            loop {
+                match events.next().await {
+                    Some(Ok(msg)) if affects_adapter(&msg) => break,
+                    Some(_) => continue,
+                    None => return,
+                }
+            }
+        }
+    })
 }
 
 pub struct Bluetooth {
@@ -69,7 +177,7 @@ pub struct Bluetooth {
 
 impl Bluetooth {
     pub fn new() -> Self {
-        Self { powered: is_powered(), hovered: false }
+        Self { powered: false, hovered: false }
     }
 }
 
@@ -100,12 +208,12 @@ impl Module for Bluetooth {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(10)).map(|_| Message::Tick)
+        Subscription::run_with_id("bluetooth", bluetooth_stream())
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick | Message::BluetoothTogglePower = message {
-            self.powered = is_powered();
+        if let Message::BluetoothPowered(powered) = message {
+            self.powered = *powered;
         }
         if let Message::BluetoothHover(v) = message {
             self.hovered = *v;

@@ -2,7 +2,7 @@ use iced::widget::{button, container};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 
 use crate::message::Message;
-use crate::module::{label_value, Module, Orientation};
+use crate::module::{label_value, poll_changes, Module, Orientation};
 use og_theme::AppColors;
 
 const WARNING_PCT: f32 = 80.0;
@@ -101,30 +101,40 @@ fn read_nvidia() -> Option<Reading> {
     Some(Reading { usage_pct, vram_used_gb: used_mib / 1024.0, vram_total_gb: total_mib / 1024.0, temp_c })
 }
 
+fn sample(backend: &Backend) -> Option<Reading> {
+    match backend {
+        Backend::Amdgpu { dir, hwmon_temp } => read_amdgpu(dir, hwmon_temp),
+        Backend::Nvidia => read_nvidia(),
+        Backend::None => None,
+    }
+}
+
+/// A reading rounded to exactly what the bar shows, so sub-display jitter
+/// (temperature, VRAM bytes) doesn't count as a change worth a redraw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuSample {
+    usage_pct: u32,
+    /// VRAM used in tenths of a GiB; `None` when total VRAM is unknown.
+    vram_tenths_gb: Option<u32>,
+}
+
+impl From<Reading> for GpuSample {
+    fn from(r: Reading) -> Self {
+        Self {
+            usage_pct: r.usage_pct.round() as u32,
+            vram_tenths_gb: (r.vram_total_gb > 0.0).then(|| (r.vram_used_gb * 10.0).round() as u32),
+        }
+    }
+}
+
 pub struct Gpu {
-    backend: Backend,
-    reading: Reading,
+    /// `None` until the first sample arrives, or when no GPU sensor exists.
+    sample: Option<GpuSample>,
 }
 
 impl Gpu {
     pub fn new() -> Self {
-        let backend = detect_backend();
-        let reading = Self::sample(&backend).unwrap_or_default();
-        Self { backend, reading }
-    }
-
-    fn sample(backend: &Backend) -> Option<Reading> {
-        match backend {
-            Backend::Amdgpu { dir, hwmon_temp } => read_amdgpu(dir, hwmon_temp),
-            Backend::Nvidia => read_nvidia(),
-            Backend::None => None,
-        }
-    }
-
-    fn refresh(&mut self) {
-        if let Some(r) = Self::sample(&self.backend) {
-            self.reading = r;
-        }
+        Self { sample: None }
     }
 }
 
@@ -134,22 +144,23 @@ impl Module for Gpu {
     }
 
     fn view(&self, colors: AppColors, size: u32, orientation: Orientation) -> Element<'_, Message> {
-        let r = self.reading;
-        let fg = if matches!(self.backend, Backend::None) {
-            colors.dim_text
-        } else if r.usage_pct >= CRITICAL_PCT {
-            CRITICAL_COLOR
-        } else if r.usage_pct >= WARNING_PCT {
-            WARNING_COLOR
-        } else {
-            colors.text
-        };
-        let value = if matches!(self.backend, Backend::None) {
-            "--".to_string()
-        } else if r.vram_total_gb > 0.0 {
-            format!("{:.0}%  {:.1}G", r.usage_pct, r.vram_used_gb)
-        } else {
-            format!("{:.0}%", r.usage_pct)
+        let (fg, value) = match self.sample {
+            None => (colors.dim_text, "--".to_string()),
+            Some(s) => {
+                let pct = s.usage_pct as f32;
+                let fg = if pct >= CRITICAL_PCT {
+                    CRITICAL_COLOR
+                } else if pct >= WARNING_PCT {
+                    WARNING_COLOR
+                } else {
+                    colors.text
+                };
+                let value = match s.vram_tenths_gb {
+                    Some(t) => format!("{}%  {}.{}G", s.usage_pct, t / 10, t % 10),
+                    None => format!("{}%", s.usage_pct),
+                };
+                (fg, value)
+            }
         };
         button(container(label_value("GPU", value, fg, size, orientation)))
             .padding(4)
@@ -168,12 +179,20 @@ impl Module for Gpu {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::Tick)
+        // Backend detection (may shell out to nvidia-smi) happens once, on
+        // the sampling thread, not while building the bar.
+        let mut backend = None;
+        poll_changes(
+            "gpu",
+            std::time::Duration::from_secs(2),
+            move || sample(backend.get_or_insert_with(detect_backend)).map(GpuSample::from),
+            Message::GpuUsage,
+        )
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick = message {
-            self.refresh();
+        if let Message::GpuUsage(sample) = message {
+            self.sample = *sample;
         }
     }
 }

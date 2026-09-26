@@ -694,8 +694,17 @@ async fn run_instance<A, E, C>(
 
                 let cursor = window.state.cursor();
 
-                events.push((Some(id), redraw_event.clone()));
-                ui.update(
+                // Stock code also pushed `redraw_event` into `events` here.
+                // The next NormalUpdate then fed it through ui.update(),
+                // which always reports `Updated`, which queued another
+                // RedrawWindow -> another frame -> another redraw event:
+                // a self-sustaining redraw loop at the event-loop's poll
+                // rate (~1 kHz measured) on a completely idle bar. The
+                // redraw event is already delivered to the UI right below,
+                // same as iced_winit does it; redraws are requested by real
+                // input/messages in NormalUpdate, or by the UI itself via
+                // `redraw_request` (handled after draw).
+                let (ui_state, _) = ui.update(
                     &[redraw_event.clone()],
                     cursor,
                     &mut window.renderer,
@@ -742,18 +751,17 @@ async fn run_instance<A, E, C>(
                     event: redraw_event.clone(),
                     status: iced_core::event::Status::Ignored,
                 });
-                debug.render_started();
+                // Widgets that animate ask for the next frame themselves.
+                if let user_interface::State::Updated {
+                    redraw_request: Some(window::RedrawRequest::NextFrame),
+                } = ui_state
+                {
+                    custom_actions.push(LayerShellAction::RedrawWindow(window.id));
+                }
 
-                debug.draw_started();
-                ui.draw(
-                    &mut window.renderer,
-                    &application.theme(),
-                    &iced_core::renderer::Style {
-                        text_color: window.state.text_color(),
-                    },
-                    window.state.cursor(),
-                );
-                debug.draw_finished();
+                debug.render_started();
+                // (Stock code ran ui.draw() a second time here, identical to
+                // the one above — pure duplicate work every frame.)
                 if !is_new_window {
                     match compositor.present(
                         &mut window.renderer,

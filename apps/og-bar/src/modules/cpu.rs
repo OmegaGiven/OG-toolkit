@@ -2,7 +2,7 @@ use iced::widget::{button, container};
 use iced::{Background, Border, Color, Element, Length, Subscription};
 
 use crate::message::Message;
-use crate::module::{label_value, Module, Orientation};
+use crate::module::{label_value, poll_changes, Module, Orientation};
 use og_theme::AppColors;
 
 const WARNING_PCT: f32 = 70.0;
@@ -22,26 +22,28 @@ fn read_cpu_totals() -> Option<(u64, u64)> {
     Some((idle, total))
 }
 
+/// Usage since the previous call, rounded to what the bar displays.
+fn sample_usage(prev: &mut Option<(u64, u64)>) -> Option<u32> {
+    let (idle, total) = read_cpu_totals()?;
+    let mut pct = None;
+    if let Some((prev_idle, prev_total)) = *prev {
+        let idle_delta = idle.saturating_sub(prev_idle) as f32;
+        let total_delta = total.saturating_sub(prev_total) as f32;
+        if total_delta > 0.0 {
+            pct = Some(((1.0 - idle_delta / total_delta) * 100.0).round() as u32);
+        }
+    }
+    *prev = Some((idle, total));
+    pct
+}
+
 pub struct Cpu {
-    prev: Option<(u64, u64)>,
     usage_pct: f32,
 }
 
 impl Cpu {
     pub fn new() -> Self {
-        Self { prev: read_cpu_totals(), usage_pct: 0.0 }
-    }
-
-    fn refresh(&mut self) {
-        let Some((idle, total)) = read_cpu_totals() else { return };
-        if let Some((prev_idle, prev_total)) = self.prev {
-            let idle_delta = idle.saturating_sub(prev_idle) as f32;
-            let total_delta = total.saturating_sub(prev_total) as f32;
-            if total_delta > 0.0 {
-                self.usage_pct = (1.0 - idle_delta / total_delta) * 100.0;
-            }
-        }
-        self.prev = Some((idle, total));
+        Self { usage_pct: 0.0 }
     }
 }
 
@@ -75,12 +77,18 @@ impl Module for Cpu {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::Tick)
+        let mut prev = read_cpu_totals();
+        poll_changes(
+            "cpu",
+            std::time::Duration::from_secs(3),
+            move || sample_usage(&mut prev),
+            |pct| Message::CpuUsage(pct.unwrap_or(0)),
+        )
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick = message {
-            self.refresh();
+        if let Message::CpuUsage(pct) = message {
+            self.usage_pct = *pct as f32;
         }
     }
 }

@@ -35,7 +35,7 @@ pub struct Pulseaudio {
 
 impl Pulseaudio {
     pub fn new() -> Self {
-        Self { volume_pct: read_volume_pct().unwrap_or(0), muted: read_muted(), hovered: false }
+        Self { volume_pct: 0, muted: false, hovered: false }
     }
 }
 
@@ -86,16 +86,76 @@ impl Module for Pulseaudio {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::Tick)
+        Subscription::run_with_id("pulseaudio", pulseaudio_stream())
     }
 
     fn update(&mut self, message: &Message) {
-        if let Message::Tick | Message::PulseaudioToggleMute = message {
-            self.volume_pct = read_volume_pct().unwrap_or(self.volume_pct);
-            self.muted = read_muted();
+        if let Message::PulseaudioState(volume_pct, muted) = message {
+            self.volume_pct = *volume_pct;
+            self.muted = *muted;
         }
         if let Message::PulseaudioHover(v) = message {
             self.hovered = *v;
         }
     }
+}
+
+/// Event-driven instead of polling: `pactl subscribe` prints a line for
+/// every server-side change, and only sink/server events (volume, mute,
+/// default-sink switch) trigger a re-read. Idle audio = zero work.
+fn pulseaudio_stream() -> impl iced::futures::Stream<Item = Message> {
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    iced::stream::channel(4, |mut sender| async move {
+        use iced::futures::SinkExt;
+
+        let read = || tokio::task::spawn_blocking(|| (read_volume_pct(), read_muted()));
+        let mut last: Option<(u32, bool)> = None;
+
+        loop {
+            let mut command = Command::new("pactl");
+            command.arg("subscribe").stdout(Stdio::piped()).kill_on_drop(true);
+            unsafe {
+                command.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
+            }
+            let child = command.spawn();
+
+            // Read once per (re)connect so a sound-server restart can't
+            // leave a stale value on the bar.
+            let mut changed = true;
+            let mut lines = child
+                .ok()
+                .and_then(|mut c| c.stdout.take().map(|out| (c, BufReader::new(out).lines())));
+
+            loop {
+                if changed {
+                    if let Ok((Some(volume), muted)) = read().await {
+                        if last != Some((volume, muted)) {
+                            last = Some((volume, muted));
+                            if sender.send(Message::PulseaudioState(volume, muted)).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                let Some((_child, reader)) = lines.as_mut() else { break };
+                match reader.next_line().await {
+                    Ok(Some(line)) => {
+                        // e.g. "Event 'change' on sink #56" — but not
+                        // "sink-input", which fires for every app stream.
+                        changed = line.contains(" on sink #") || line.contains(" on server")
+                    }
+                    _ => break,
+                }
+            }
+
+            // pactl missing or the sound server went away: retry shortly.
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+    })
 }
